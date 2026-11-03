@@ -12,7 +12,7 @@ const FASE_LABEL = { basis: "Basis", opbouw: "Opbouw", piek: "Piek", afbouw: "Af
 const app = document.getElementById("app");
 const nav = document.getElementById("nav");
 
-const state = { user: null, data: null, week: 1 };
+const state = { user: null, data: null, week: 1, training: null };
 
 // ---------- hulpfuncties ----------
 function h(tag, props, ...children) {
@@ -126,7 +126,7 @@ function viewAuth(mode = "login") {
   field("Gebruikersnaam", username, mode === "register" ? "Geen e-mailadres nodig. Kies een naam om mee in te loggen." : null),
   field("Wachtwoord", password, mode === "register" ? "Minstens 10 tekens. Let op: wachtwoord vergeten kan nu nog niet hersteld worden." : null),
   mode === "register"
-    ? h("label", { class: "check" }, consent, h("span", {}, "Ik ga akkoord met de ", h("a", { href: "privacy.html", target: "_blank", rel: "noopener" }, "privacyverklaring"), ". Mijn trainingsgegevens mogen met een AI-dienst (Groq) worden verwerkt om mijn schema te maken."))
+    ? h("label", { class: "check" }, consent, h("span", {}, "Ik ga akkoord met de ", h("a", { href: "privacy.html", target: "_blank", rel: "noopener" }, "privacyverklaring"), ". Mijn trainingsgegevens en eventuele gezondheidsgegevens mogen met een AI-dienst (Groq) worden verwerkt om mijn schema te maken."))
     : null,
   error,
   submit,
@@ -155,6 +155,14 @@ function viewIntake(prefill) {
   const niveau = h("select", {}, ...[["beginner", "Beginner"], ["gevorderd", "Gevorderd"], ["ervaren", "Ervaren"], ["wedstrijd", "Wedstrijdrenner"]]
     .map(([v, t]) => h("option", { value: v, selected: (p.niveau || "gevorderd") === v, text: t })));
   const uren = h("input", { type: "number", min: 2, max: 25, step: 0.5, required: true, value: p.uren_per_week ?? 6 });
+  const defaultMeter = p.meter !== undefined ? p.meter : prefill ? "none" : "";
+  const meter = h("select", { required: true }, [
+    ["", "Maak een keuze"],
+    ["power", "Vermogensmeter"],
+    ["heart_rate", "Hartslagmeter"],
+    ["both", "Beide"],
+    ["none", "Geen van beide"]
+  ].map(([value, label]) => h("option", { value, selected: defaultMeter === value, text: label })));
   const dagenChecks = DAGEN_KORT.map((naam, i) => ({
     i, box: h("input", { type: "checkbox", checked: (p.dagen || [1, 3, 5, 6]).includes(i) }), naam
   }));
@@ -162,12 +170,45 @@ function viewIntake(prefill) {
   const jaren = h("input", { type: "number", min: 0, max: 60, placeholder: "Optioneel", value: p.ervaring_jaren ?? "" });
   const beperkingen = h("textarea", { rows: 2, maxlength: 300, placeholder: "Optioneel, bijvoorbeeld een oude blessure. Vul alleen in wat je kwijt wilt." }, p.beperkingen || "");
   const opmerkingen = h("textarea", { rows: 2, maxlength: 400, placeholder: "Optioneel, bijvoorbeeld: ik werk onregelmatig of train vooral buiten." }, p.opmerkingen || "");
+  const workouts = h("input", { type: "file", accept: ".zip,application/zip" });
+  const summary = h("input", { type: "file", accept: ".zip,application/zip" });
+  const metrics = h("input", { type: "file", accept: ".zip,application/zip" });
+  const trainingConsent = h("input", { type: "checkbox" });
+  const uploadStatus = h("p", { class: "muted", role: "status" });
+  const uploadButton = h("button", {
+    class: "btn ghost", type: "button", text: "TrainingPeaks-exports importeren",
+    onclick: async () => {
+      uploadStatus.textContent = "";
+      const selected = [["workouts", workouts], ["summary", summary], ["metrics", metrics]]
+        .filter(([, input]) => input.files && input.files.length)
+        .map(([name, input]) => [name, input.files[0]]);
+      if (!selected.length) { uploadStatus.textContent = "Kies eerst minstens één ZIP-exportbestand."; return; }
+      if (!trainingConsent.checked) { uploadStatus.textContent = "Geef eerst toestemming om deze trainingsgegevens met Groq te verwerken."; return; }
+      const formData = new FormData();
+      for (const [name, file] of selected) formData.append(name, file);
+      formData.append("ai_consent", "yes");
+      uploadButton.disabled = true;
+      uploadStatus.textContent = "De exports worden verwerkt…";
+      try {
+        const response = await fetch("/api/trainingpeaks/import", { method: "POST", credentials: "same-origin", body: formData });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.message || "De exports konden niet worden geïmporteerd.");
+        state.training = result.summary;
+        viewIntake(collect());
+      } catch (e) {
+        uploadStatus.textContent = e.message;
+      } finally {
+        uploadButton.disabled = false;
+      }
+    }
+  });
   const submit = h("button", { class: "btn", type: "submit", text: "Volgende: vragen van de coach" });
 
   function collect() {
     return {
       doel: doel.value, datum: datum.value || null, niveau: niveau.value, uren_per_week: Number(uren.value),
       dagen: dagenChecks.filter(d => d.box.checked).map(d => d.i),
+      meter: meter.value,
       ftp: ftp.value ? Number(ftp.value) : null, ervaring_jaren: jaren.value ? Number(jaren.value) : null,
       beperkingen: beperkingen.value, opmerkingen: opmerkingen.value
     };
@@ -192,11 +233,22 @@ function viewIntake(prefill) {
   field("Wat is je doel?", doel),
   field("Datum van je doel", datum, "Optioneel. Zonder datum maak ik een schema van 8 weken."),
   h("div", { class: "grid2" }, field("Niveau", niveau), field("Uren per week (maximaal)", uren)),
+  field("Welke meetapparatuur gebruik je?", meter),
   h("fieldset", { class: "days" }, h("legend", { text: "Op welke dagen kun je trainen?" }),
     ...dagenChecks.map(d => h("label", { class: "daybox" }, d.box, h("span", { text: d.naam })))),
-  h("div", { class: "grid2" }, field("FTP in watt", ftp, "Heb je geen vermogensmeter? Laat leeg."), field("Jaren ervaring", jaren)),
+  h("div", { class: "grid2" }, field("FTP in watt", ftp, "Alleen invullen als je een vermogensmeter gebruikt."), field("Jaren ervaring", jaren)),
   field("Beperkingen of klachten", beperkingen),
   field("Overige opmerkingen", opmerkingen),
+  h("section", { class: "training-import stack" },
+    h("h3", { text: "TrainingPeaks-gegevens (optioneel)" }),
+    h("p", { class: "muted", text: "Upload de ZIP-exporten van Workout Files, Workout Summary en/of Custom Metrics. Je kunt exports tegelijk of apart importeren. Kies in TrainingPeaks maximaal één jaar aan gegevens; alleen gegevens van maximaal 365 dagen oud worden verwerkt. De totale upload mag maximaal 20 MB zijn. Ruwe bestanden worden weggegooid; weektotalen worden samengevoegd, bewaard en door de coach gebruikt." }),
+    state.training ? h("p", { class: "import-summary", text: `Geïmporteerd: ${state.training.activities} ritten in ${state.training.weeks.length} weken. Periode: ${state.training.period_start} t/m ${state.training.period_end}.` }) : null,
+    field("Workout Files — ZIP met FIT-bestanden", workouts),
+    field("Workout Summary — ZIP met CSV", summary),
+    field("Custom Metrics — ZIP met CSV", metrics),
+    h("label", { class: "check" }, trainingConsent, h("span", { text: "Ik geef toestemming om de geïmporteerde trainingsgegevens, inclusief eventuele gezondheidswaarden, met Groq te verwerken voor mijn schema." })),
+    uploadStatus, uploadButton
+  ),
   error, status, submit
   );
 
@@ -207,27 +259,50 @@ function viewQuestions(intake, vragen) {
   renderNav();
   const error = h("p", { class: "error", role: "alert" });
   const status = h("p", { class: "muted", role: "status" });
-  const inputs = vragen.map(v => ({ v, el: h("textarea", { rows: 2, maxlength: 300 }) }));
-  const submit = h("button", { class: "btn", type: "submit", text: "Maak mijn schema" });
-  const form = h("form", {
-    class: "card stack",
-    onsubmit: async (event) => {
-      event.preventDefault();
-      error.textContent = "";
-      const answers = inputs.map(i => ({ vraag: i.v.vraag, antwoord: i.el.value })).filter(a => a.antwoord.trim());
-      const done = busyButton(submit);
-      try { await createPlan(intake, answers, error, status); } catch (e) { error.textContent = e.message; done(); }
-    }
-  },
-  h("h2", { text: "Een paar vragen van de coach" }),
-  h("p", { class: "muted", text: "Hoe nauwkeuriger je antwoord, hoe beter je schema past. Je mag vragen overslaan." }),
-  ...inputs.map(i => field(i.v.vraag, i.el)),
-  error, status,
-  h("div", { class: "row" },
-    submit,
-    h("button", { class: "btn ghost", type: "button", text: "Terug", onclick: () => viewIntake(intake) }))
-  );
-  show(h("h1", { text: "Nieuw schema" }), form);
+  const messages = [];
+  let index = 0;
+  const render = () => {
+    const answer = h("textarea", { rows: 2, maxlength: 300, placeholder: "Typ je antwoord…" });
+    const last = index >= vragen.length - 1;
+    const submit = h("button", { class: "btn", type: "submit", text: last ? "Maak mijn schema" : "Verstuur antwoord" });
+    const chat = h("div", { class: "chat", "aria-live": "polite" },
+      ...messages.map(message => h("div", { class: `chat-message ${message.role}` },
+        h("span", { class: "chat-label", text: message.role === "coach" ? "Coach" : "Jij" }),
+        h("p", { class: "chat-bubble", text: message.text }))),
+      index < vragen.length ? h("div", { class: "chat-message coach" },
+        h("span", { class: "chat-label", text: "Coach" }),
+        h("p", { class: "chat-bubble", text: vragen[index].vraag })) : null
+    );
+    const form = h("form", {
+      class: "card stack",
+      onsubmit: async (event) => {
+        event.preventDefault();
+        error.textContent = "";
+        messages.push(
+          { role: "coach", text: vragen[index].vraag },
+          { role: "user", text: answer.value.trim() || "Vraag overgeslagen." }
+        );
+        const answers = messages.filter(message => message.role === "user").map((message, answerIndex) => ({
+          vraag: vragen[answerIndex].vraag, antwoord: message.text === "Vraag overgeslagen." ? "" : message.text
+        })).filter(item => item.antwoord);
+        if (!last) { index++; render(); return; }
+        submit.disabled = true;
+        try { await createPlan(intake, answers, error, status); }
+        catch (e) { messages.splice(-2); error.textContent = e.message; submit.disabled = false; }
+      }
+    },
+    h("h2", { text: "Vragen van de coach" }),
+    h("p", { class: "muted", text: "Beantwoord de vragen één voor één. Je mag een vraag overslaan." }),
+    chat,
+    index < vragen.length ? field("Jouw antwoord", answer) : null,
+    error, status,
+    h("div", { class: "row" },
+      submit,
+      h("button", { class: "btn ghost", type: "button", text: "Terug", onclick: () => viewIntake(intake) }))
+    );
+    show(h("h1", { text: "Nieuw schema" }), form);
+  };
+  render();
 }
 
 async function createPlan(intake, answers, errorEl, statusEl) {
@@ -403,6 +478,7 @@ async function start() {
       state.user = me.username;
     }
     state.data = await api("GET", "/api/plan");
+    state.training = (await api("GET", "/api/trainingpeaks")).summary;
     if (state.data.plan) {
       state.week = state.data.weeks[state.data.weeks.length - 1].week_no;
       viewPlan();
