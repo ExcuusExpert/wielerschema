@@ -1,2 +1,0 @@
-# Kopieer dit bestand naar .dev.vars voor lokaal testen met "npx wrangler dev"
-GROQ_API_KEY=jouw-groq-sleutel
