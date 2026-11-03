@@ -1,0 +1,17 @@
+# WielerSchema: één Cloudflare-project met de Worker (API) en de statische site (map public/).
+name = "wielerschema"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "wielerschema"
+database_id = "473ee21f-147c-4a06-ab49-624acfa80cbb"
+
+# Workers Logs: zie in het dashboard hoe vaak schema's mislukken, de AI bezet is, enz. (zonder persoonsgegevens)
+[observability]
+enabled = true

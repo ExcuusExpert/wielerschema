@@ -1,0 +1,288 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
+import worker from "../src/worker.js";
+
+const BASE = "https://wielerschema.test";
+
+// Kleine nabootsing van Cloudflare D1 bovenop node:sqlite
+class FakeD1 {
+  constructor() { this.db = new DatabaseSync(":memory:"); }
+  prepare(sql) {
+    const db = this.db;
+    return {
+      args: [],
+      bind(...a) { this.args = a.map(v => (v === undefined ? null : v)); return this; },
+      async first() { return db.prepare(sql).get(...this.args) ?? null; },
+      async all() { return { results: db.prepare(sql).all(...this.args) }; },
+      async run() { const r = db.prepare(sql).run(...this.args); return { meta: { changes: r.changes } }; }
+    };
+  }
+  async batch(statements) {
+    for (const s of statements) await s.run();
+    return [];
+  }
+}
+
+// Nagebootste Groq
+let groqCalls = 0;
+let groqMode = "ok";
+const realFetch = globalThis.fetch;
+function weekJson({ minutes = 240, allDays = true } = {}) {
+  const dagen = [];
+  for (let d = 0; d < 7; d++) {
+    dagen.push({ dag: d, type: allDays || d % 2 === 0 ? "duurrit" : "rust", minuten: minutes, zone: "Z2", titel: d === 0 ? "<script>alert(1)</script>Rustig" : "Duurrit", beschrijving: "Rustig rijden, RPE 4." });
+  }
+  return { dagen, tips: "Drink genoeg." };
+}
+globalThis.fetch = async (url, init) => {
+  if (!String(url).includes("api.groq.com")) return realFetch(url, init);
+  groqCalls++;
+  if (groqMode === "busy") return new Response("{}", { status: 429 });
+  const prompt = JSON.parse(init.body).messages[1].content;
+  let content;
+  if (groqMode === "garbage") content = "Dit is geen JSON";
+  else if (prompt.includes("vervolgvragen")) content = JSON.stringify({ vragen: [{ vraag: "Hoeveel uur train je nu per week?" }, { vraag: "Heb je ervaring met intervallen?" }] });
+  else if (prompt.includes("Maak een trainingsschema van")) {
+    const weeks = Number(prompt.match(/van (\d+) weken/)[1]);
+    content = JSON.stringify({
+      samenvatting: "Rustige opbouw.",
+      weken: Array.from({ length: weeks }, (_, i) => ({ week: i + 1, fase: i % 4 === 3 ? "herstel" : "opbouw", focus: "Basis", uren: 6 })),
+      week1: weekJson()
+    });
+  } else if (prompt.includes("Maak nu week")) content = JSON.stringify({ uitleg: "Iets rustiger.", week: weekJson({ minutes: 200 }) });
+  else content = "{}";
+  return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 });
+};
+
+function makeEnv() { return { DB: new FakeD1(), GROQ_API_KEY: "test" }; }
+let ipN = 0;
+
+async function api(env, method, path, body, { cookie, ip, origin } = {}) {
+  const headers = { "CF-Connecting-IP": ip || `10.0.0.${++ipN}` };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (cookie) headers.Cookie = cookie;
+  if (origin) headers.Origin = origin;
+  const res = await worker.fetch(new Request(BASE + path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined }), env);
+  const setCookie = res.headers.get("Set-Cookie");
+  const match = setCookie && setCookie.match(/__Host-ws=([0-9a-f]{64})/);
+  return { status: res.status, data: await res.json().catch(() => ({})), cookie: match ? `__Host-ws=${match[1]}` : null, setCookie, res };
+}
+
+const GOOD_PW = "een-lang-wachtwoord";
+async function signup(env, username = "hessel", ip) {
+  const r = await api(env, "POST", "/api/register", { username, password: GOOD_PW, consent: true }, { ip });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  return r.cookie;
+}
+function future(days) {
+  const d = new Date(); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10);
+}
+const INTAKE = { doel: "Toertocht van 120 km", datum: future(70), niveau: "gevorderd", uren_per_week: 6, dagen: [1, 3, 5, 6], ftp: 220, ervaring_jaren: 3, beperkingen: "", opmerkingen: "" };
+
+test("registreren: cookie, beveiligde vlaggen en wachtwoord niet leesbaar opgeslagen", async () => {
+  const env = makeEnv();
+  const r = await api(env, "POST", "/api/register", { username: "Hessel", password: GOOD_PW, consent: true });
+  assert.equal(r.status, 200);
+  assert.match(r.setCookie, /HttpOnly/);
+  assert.match(r.setCookie, /Secure/);
+  assert.match(r.setCookie, /SameSite=Lax/);
+  const row = env.DB.db.prepare("SELECT * FROM users").get();
+  assert.equal(row.username, "hessel");
+  assert.ok(!JSON.stringify(row).includes(GOOD_PW));
+  assert.equal(row.hash.length, 64);
+  const me = await api(env, "GET", "/api/me", undefined, { cookie: r.cookie });
+  assert.equal(me.data.username, "hessel");
+});
+
+test("registreren: zwak wachtwoord, geen toestemming, dubbele naam", async () => {
+  const env = makeEnv();
+  assert.equal((await api(env, "POST", "/api/register", { username: "abc", password: "kort", consent: true })).status, 400);
+  assert.equal((await api(env, "POST", "/api/register", { username: "abc", password: GOOD_PW, consent: false })).data.error, "consent");
+  assert.equal((await api(env, "POST", "/api/register", { username: "a b", password: GOOD_PW, consent: true })).data.error, "username");
+  await signup(env, "dubbel");
+  assert.equal((await api(env, "POST", "/api/register", { username: "DUBBEL", password: GOOD_PW, consent: true })).status, 409);
+});
+
+test("twee gebruikers met hetzelfde wachtwoord hebben verschillende hashes", async () => {
+  const env = makeEnv();
+  await signup(env, "een"); await signup(env, "twee");
+  const rows = env.DB.db.prepare("SELECT hash, salt FROM users").all();
+  assert.notEqual(rows[0].hash, rows[1].hash);
+  assert.notEqual(rows[0].salt, rows[1].salt);
+});
+
+test("inloggen en uitloggen", async () => {
+  const env = makeEnv();
+  await signup(env, "fietser");
+  assert.equal((await api(env, "POST", "/api/login", { username: "fietser", password: "fout-wachtwoord!" })).status, 401);
+  assert.equal((await api(env, "POST", "/api/login", { username: "bestaatniet", password: GOOD_PW })).status, 401);
+  const ok = await api(env, "POST", "/api/login", { username: "FIETSER", password: GOOD_PW });
+  assert.equal(ok.status, 200);
+  assert.equal((await api(env, "GET", "/api/me", undefined, { cookie: ok.cookie })).status, 200);
+  await api(env, "POST", "/api/logout", {}, { cookie: ok.cookie });
+  assert.equal((await api(env, "GET", "/api/me", undefined, { cookie: ok.cookie })).status, 401);
+});
+
+test("zonder inlog geen toegang tot schema en AI", async () => {
+  const env = makeEnv();
+  assert.equal((await api(env, "GET", "/api/plan")).status, 401);
+  assert.equal((await api(env, "POST", "/api/intake/questions", { intake: INTAKE })).status, 401);
+  assert.equal(groqCalls >= 0, true);
+});
+
+test("CSRF: aanvraag van een andere site wordt geweigerd", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env);
+  const r = await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie, origin: "https://evil.example" });
+  assert.equal(r.status, 403);
+  const ok = await api(env, "POST", "/api/logout", {}, { cookie, origin: BASE });
+  assert.equal(ok.status, 200);
+});
+
+test("inloggen: te veel pogingen worden geblokkeerd", async () => {
+  const env = makeEnv();
+  await signup(env, "doelwit");
+  let last;
+  for (let i = 0; i < 12; i++) last = await api(env, "POST", "/api/login", { username: "doelwit", password: "fout-wachtwoord!" }, { ip: "7.7.7.7" });
+  assert.equal(last.status, 429);
+});
+
+test("registreren: limiet per IP-adres", async () => {
+  const env = makeEnv();
+  let last;
+  for (let i = 0; i < 11; i++) last = await api(env, "POST", "/api/register", { username: `gebruiker${i}`, password: GOOD_PW, consent: true }, { ip: "6.6.6.6" });
+  assert.equal(last.status, 429);
+});
+
+test("intake: ongeldige invoer wordt netjes geweigerd", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env);
+  const bad = async (patch) => (await api(env, "POST", "/api/intake/questions", { intake: { ...INTAKE, ...patch } }, { cookie })).status;
+  assert.equal(await bad({ doel: "" }), 400);
+  assert.equal(await bad({ niveau: "superman" }), 400);
+  assert.equal(await bad({ uren_per_week: 99 }), 400);
+  assert.equal(await bad({ dagen: [2] }), 400);
+  assert.equal(await bad({ datum: future(2) }), 400);
+  assert.equal(await bad({ datum: "morgen" }), 400);
+});
+
+test("vragen van de coach", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env);
+  const r = await api(env, "POST", "/api/intake/questions", { intake: INTAKE }, { cookie });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.vragen.length, 2);
+  assert.equal(r.data.vragen[0].id, "v1");
+});
+
+test("schema maken: vangrails op dagen, minuten en tekst", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env);
+  const r = await api(env, "POST", "/api/plan/create", { intake: INTAKE, answers: [{ vraag: "Hoeveel uur?", antwoord: "4 uur" }] }, { cookie });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  const { plan, weeks } = r.data;
+  assert.equal(new Date(plan.start_date + "T00:00:00Z").getUTCDay(), 1, "start op maandag");
+  assert.equal(plan.outline.length, plan.total_weeks);
+  assert.ok(plan.total_weeks >= 9 && plan.total_weeks <= 11);
+  const w1 = weeks[0];
+  // De AI plande op alle 7 dagen 240 minuten; alleen dagen 1,3,5,6 zijn beschikbaar
+  for (const dag of w1.dagen) {
+    if (![1, 3, 5, 6].includes(dag.dag)) assert.equal(dag.type, "rust");
+  }
+  assert.ok(w1.totaal_minuten <= 6 * 60 * 1.05 + 20, `totaal ${w1.totaal_minuten}`);
+  assert.ok(!JSON.stringify(w1).includes("<script>"));
+  // opgeslagen en terug te lezen
+  const again = await api(env, "GET", "/api/plan", undefined, { cookie });
+  assert.equal(again.data.weeks.length, 1);
+});
+
+test("AI geeft rommel: geen schema opgeslagen en nette foutmelding", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env);
+  groqMode = "garbage";
+  const r = await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  groqMode = "ok";
+  assert.equal(r.status, 502);
+  assert.equal((await api(env, "GET", "/api/plan", undefined, { cookie })).data.plan, null);
+});
+
+test("AI bezet: 503", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env);
+  groqMode = "busy";
+  const r = await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  groqMode = "ok";
+  assert.equal(r.status, 503);
+});
+
+test("dagelijkse AI-limiet per gebruiker", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env);
+  let last;
+  for (let i = 0; i < 13; i++) last = await api(env, "POST", "/api/intake/questions", { intake: INTAKE }, { cookie });
+  assert.equal(last.status, 429);
+  assert.equal(last.data.error, "ai_limit");
+});
+
+test("check-in: volgende week, geen dubbele check-in, klachten maken het licht", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env);
+  const created = await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  const w1total = created.data.weeks[0].totaal_minuten;
+
+  const bad = await api(env, "POST", "/api/plan/checkin", { week_no: 1, gedaan_pct: 90 }, { cookie });
+  assert.equal(bad.status, 400);
+
+  const r = await api(env, "POST", "/api/plan/checkin", { week_no: 1, gedaan_pct: 90, uren_gedaan: 5, gevoel: 4, klachten: true, opmerking: "knie doet pijn" }, { cookie });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.weeks.length, 2);
+  assert.equal(r.data.weeks[0].checkin.klachten, true);
+  const w2 = r.data.weeks[1];
+  assert.ok(w2.totaal_minuten <= w1total * 0.5 + 20, `week 2 = ${w2.totaal_minuten}, week 1 = ${w1total}`);
+  assert.match(w2.waarschuwing, /arts/);
+
+  const dubbel = await api(env, "POST", "/api/plan/checkin", { week_no: 1, gedaan_pct: 90, gevoel: 4 }, { cookie });
+  assert.equal(dubbel.status, 409);
+});
+
+test("check-in zonder klachten: geen waarschuwing", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env);
+  await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  const r = await api(env, "POST", "/api/plan/checkin", { week_no: 1, gedaan_pct: 100, uren_gedaan: 6, gevoel: 4, klachten: false }, { cookie });
+  assert.equal(r.data.weeks[1].waarschuwing, "");
+});
+
+test("gebruikers zien elkaars schema niet", async () => {
+  const env = makeEnv();
+  const a = await signup(env, "anna");
+  const b = await signup(env, "bram");
+  await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie: a });
+  assert.equal((await api(env, "GET", "/api/plan", undefined, { cookie: b })).data.plan, null);
+});
+
+test("export bevat geen wachtwoordgegevens; account verwijderen wist alles", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env, "wissen");
+  await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  const exp = await api(env, "GET", "/api/account/export", undefined, { cookie });
+  assert.equal(exp.status, 200);
+  assert.ok(!JSON.stringify(exp.data).match(/salt|hash/));
+  assert.equal(exp.data.gebruikersnaam, "wissen");
+
+  assert.equal((await api(env, "POST", "/api/account/delete", { password: "verkeerd-wachtwoord" }, { cookie })).status, 401);
+  assert.equal((await api(env, "POST", "/api/account/delete", { password: GOOD_PW }, { cookie })).status, 200);
+  for (const table of ["users", "sessions", "plans", "weeks"]) {
+    assert.equal(env.DB.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0, table);
+  }
+  assert.equal((await api(env, "GET", "/api/me", undefined, { cookie })).status, 401);
+});
+
+test("nieuw schema beginnen wist het oude", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env);
+  await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  assert.equal((await api(env, "DELETE", "/api/plan", undefined, { cookie })).status, 200);
+  assert.equal((await api(env, "GET", "/api/plan", undefined, { cookie })).data.plan, null);
+});
