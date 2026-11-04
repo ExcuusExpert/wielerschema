@@ -88,6 +88,14 @@ function renderNav() {
   clear(nav);
   if (!state.user) return;
   nav.appendChild(h("button", { class: "link", type: "button", text: "Mijn schema", onclick: () => (state.data?.plan ? viewPlan() : viewIntake()) }));
+  if (state.data?.plan) nav.appendChild(h("button", {
+    class: "link", type: "button", text: "Coach chat",
+    onclick: () => {
+      if (!document.getElementById("coach-chat")) viewPlan();
+      document.getElementById("coach-chat")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      document.getElementById("coach-input")?.focus({ preventScroll: true });
+    }
+  }));
   nav.appendChild(h("button", { class: "link", type: "button", text: "Account", onclick: viewAccount }));
   nav.appendChild(h("button", {
     class: "link", type: "button", text: "Uitloggen",
@@ -422,41 +430,57 @@ function checkinForm(plan, week) {
   error, status, submit);
 }
 
-function coachChat(plan, week) {
-  const availableDays = plan.intake.dagen;
-  const defaultDay = week.dagen.find(item => availableDays.includes(item.dag) && item.type !== "rust")?.dag ?? availableDays[0];
-  const day = h("select", {}, ...availableDays.map(index =>
+function coachChat(plan, weeks, currentWeek) {
+  const contextWeek = h("select", {}, ...weeks.map(item =>
+    h("option", { value: item.week_no, selected: item.week_no === currentWeek.week_no, text: `Week ${item.week_no}` })));
+  const defaultDay = currentWeek.dagen.find(item => plan.intake.dagen.includes(item.dag) && item.type !== "rust")?.dag ?? plan.intake.dagen[0];
+  const day = h("select", {}, ...plan.intake.dagen.map(index =>
     h("option", { value: index, selected: index === defaultDay, text: DAGEN_KORT[index] })));
-  const messages = h("div", { class: "chat", "aria-live": "polite" });
+  const messages = h("div", { class: "chat", "aria-live": "polite", "aria-relevant": "additions text" });
   const error = h("p", { class: "error", role: "alert" });
   const status = h("p", { class: "muted", role: "status" });
-  const input = h("textarea", { rows: 3, maxlength: 1000, required: true, placeholder: "Bijvoorbeeld: kun je deze training op hartslag uitleggen, of iets lichter maken?" });
+  const input = h("textarea", { id: "coach-input", rows: 3, maxlength: 1000, required: true, placeholder: "Vraag iets over je schema, training of herstel…" });
   const submit = h("button", { class: "btn", type: "submit", text: "Stuur naar de coach" });
   let loadId = 0;
-  const renderMessages = items => {
+  let conversation = [];
+  const renderMessages = (items, thinking = false) => {
     clear(messages);
-    if (!items.length) messages.appendChild(h("p", { class: "muted", text: "Begin het gesprek met een vraag of vraag de coach om deze training aan te passen." }));
+    if (!items.length && !thinking) messages.appendChild(h("div", { class: "chat-empty" },
+      h("span", { class: "coach-avatar", "aria-hidden": "true", text: "W" }),
+      h("p", { text: "Hoi! Ik ben je wielercoach. Vraag me iets over je schema, je trainingen of hoe je je voelt." }),
+      h("p", { class: "hint", text: "Dit is één doorlopend gesprek. Kies een training als context wanneer je die wilt bespreken of aanpassen." })));
     for (const item of items) {
       messages.appendChild(h("div", { class: `chat-message ${item.role === "assistant" ? "coach" : "user"}` },
-        h("span", { class: "chat-label", text: item.role === "assistant" ? "Coach" : "Jij" }),
+        h("div", { class: "chat-meta" },
+          h("span", { class: "chat-label", text: item.role === "assistant" ? "WielerSchema-coach" : "Jij" }),
+          item.week_no ? h("span", { class: "chat-context", text: `Week ${item.week_no} · ${DAGEN_KORT[item.day_no] || ""}` }) : null),
         h("p", { class: "chat-bubble", text: item.content }),
         item.updated ? h("span", { class: "hint", text: "Training bijgewerkt" }) : null));
     }
+    if (thinking) messages.appendChild(h("div", { class: "chat-message coach", role: "status" },
+      h("span", { class: "chat-label", text: "WielerSchema-coach" }),
+      h("div", { class: "chat-bubble typing" },
+        h("span", { class: "typing-dots", "aria-hidden": "true" }, h("i"), h("i"), h("i")),
+        h("span", { class: "sr-only", text: "De coach is je bericht aan het verwerken" }))));
+    messages.scrollTop = messages.scrollHeight;
   };
   const loadThread = async () => {
     const requestId = ++loadId;
     error.textContent = "";
-    status.textContent = "Gesprek laden…";
+    renderMessages([]);
+    status.textContent = "Je gesprek laden…";
     try {
-      const thread = await api("GET", `/api/coach/chat?week_no=${week.week_no}&day_no=${day.value}`);
-      if (requestId === loadId) renderMessages(thread.messages);
+      const thread = await api("GET", "/api/coach/chat?global=1");
+      if (requestId === loadId) {
+        conversation = thread.messages;
+        renderMessages(conversation);
+      }
     } catch (e) {
       if (requestId === loadId) error.textContent = e.message;
     } finally {
       if (requestId === loadId) status.textContent = "";
     }
   };
-  day.addEventListener("change", loadThread);
   const form = h("form", {
     class: "stack coach-chat-form",
     onsubmit: async event => {
@@ -465,28 +489,51 @@ function coachChat(plan, week) {
       if (!bericht) return;
       error.textContent = "";
       submit.disabled = true;
-      status.textContent = "De coach denkt mee…";
+      submit.textContent = "De coach denkt na…";
+      const startedAt = Date.now();
+      renderMessages([...conversation, {
+        role: "user", content: bericht, week_no: Number(contextWeek.value), day_no: Number(day.value)
+      }], true);
+      status.textContent = "Je bericht wordt verwerkt. Dit kan even duren…";
       try {
-        await api("POST", "/api/coach/chat", { week_no: week.week_no, day_no: Number(day.value), bericht });
+        await api("POST", "/api/coach/chat", {
+          week_no: Number(contextWeek.value), day_no: Number(day.value), bericht, global: true
+        });
+        const remaining = 800 - (Date.now() - startedAt);
+        if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
         input.value = "";
         state.data = await api("GET", "/api/plan");
-        state.week = week.week_no;
+        state.week = Number(contextWeek.value);
         viewPlan();
       } catch (e) {
         error.textContent = e.message;
         submit.disabled = false;
+        submit.textContent = "Stuur naar de coach";
+        renderMessages(conversation);
         status.textContent = "";
       }
     }
   },
-  field("Over welke training chat je?", day),
+  h("div", { class: "grid2 coach-context" },
+    field("Week als context", contextWeek),
+    field("Training als context", day)),
+  h("p", { class: "hint", text: "Stel gerust een algemene vraag. Wil je iets aanpassen? Kies dan hierboven de training; alleen die training kan worden gewijzigd." }),
   messages,
+  h("div", { class: "quick-prompts", "aria-label": "Voorbeeldvragen" },
+    ...["Leg deze training uit", "Maak deze training lichter"].map(text =>
+      h("button", { class: "prompt-chip", type: "button", text, onclick: () => { input.value = `${text}.`; input.focus(); } }))),
   field("Bericht aan de coach", input),
-  h("p", { class: "hint", text: "De coach kan uitleg geven of alleen de gekozen dag aanpassen. Andere trainingen blijven staan. Gebruik TrainingPeaks AI om de gekopieerde prompt als workout op te bouwen." }),
-  error, status, submit);
+  h("p", { class: "hint", text: "De coach past geen andere trainingen aan. Voor TrainingPeaks kun je per workout een prompt kopiëren." }),
+  error, status, h("div", { class: "row between coach-submit-row" },
+    h("span", { class: "hint", text: "Je chat wordt bewaard bij je schema." }), submit));
   loadThread();
-  return h("section", { class: "card stack" },
-    h("h2", { text: "Chat met je AI-coach" }),
+  return h("section", { id: "coach-chat", class: "card stack coach-panel", "aria-labelledby": "coach-chat-title" },
+    h("div", { class: "coach-heading" },
+      h("span", { class: "coach-avatar", "aria-hidden": "true", text: "W" }),
+      h("div", {},
+        h("p", { class: "eyebrow", text: "ALTIJD IN JOUW HOEK" }),
+        h("h2", { id: "coach-chat-title", text: "Praat met je coach" })),
+      h("span", { class: "coach-presence" }, h("i", { "aria-hidden": "true" }), "Persoonlijke coach")),
     form);
 }
 
@@ -519,11 +566,14 @@ function viewPlan() {
   const finished = isLast && week.week_no >= plan.total_weeks;
 
   show(
-    h("h1", { text: plan.intake.doel }),
+    h("div", { class: "dashboard-heading" },
+      h("p", { class: "eyebrow", text: "JOUW TRAININGSDASHBOARD" }),
+      h("h1", { text: plan.intake.doel })),
     h("section", { class: "card stack" },
       h("p", { text: plan.summary }),
       h("p", { class: "muted", text: `${plan.total_weeks} weken, start ${dateLabel(plan.start_date)}. Je ziet steeds één week in detail; de volgende week maakt de coach nadat je hebt teruggemeld hoe het ging.` }),
       outline),
+    coachChat(plan, weeks, week),
     week.waarschuwing ? h("p", { class: "warn", role: "alert", text: week.waarschuwing }) : null,
     h("section", { class: "stack" },
       h("div", { class: "row between" },
@@ -534,7 +584,6 @@ function viewPlan() {
       h("div", { class: "days-grid" }, ...week.dagen.map(d => dayCard(plan, week, d))),
       h("p", { class: "muted", text: "De prompt wordt naar je klembord gekopieerd; plak hem daarna in TrainingPeaks AI. De hartslagdoelen gebruiken je daar ingestelde zones; er worden geen bpm-waarden verzonnen." }),
       week.tips ? h("p", { class: "tip", text: "Tip: " + week.tips }) : null),
-    coachChat(plan, week),
     isLast && !finished ? checkinForm(plan, week) : null,
     finished ? h("p", { class: "card", text: "Dit was de laatste week van je schema. Veel succes met je doel!" }) : null,
     h("p", { class: "muted" },

@@ -210,6 +210,28 @@ test("coachchat kan uitleggen, een gekozen training aanpassen en het gesprek bew
   assert.equal(badDay.status, 400);
 });
 
+test("doorlopende coachchat toont gesprekken samen en neemt eerdere berichten mee", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env);
+  await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  const earlier = await api(env, "POST", "/api/coach/chat", {
+    week_no: 1, day_no: 1, bericht: "Hoe zwaar is mijn training?"
+  }, { cookie });
+  assert.equal(earlier.status, 200);
+  const current = await api(env, "POST", "/api/coach/chat", {
+    week_no: 1, day_no: 3, bericht: "Maak deze training rustiger.", global: true
+  }, { cookie });
+  assert.equal(current.status, 200, JSON.stringify(current.data));
+  assert.ok(lastGroqPrompt.includes("Hoe zwaar is mijn training?"));
+
+  const conversation = await api(env, "GET", "/api/coach/chat?global=1", undefined, { cookie });
+  assert.equal(conversation.status, 200);
+  assert.equal(conversation.data.messages.length, 4);
+  assert.equal(conversation.data.messages[0].day_no, 1);
+  assert.equal(conversation.data.messages[2].day_no, 3);
+  assert.equal(conversation.data.messages[3].role, "assistant");
+});
+
 test("TrainingPeaks-import verwerkt ZIP/CSV, beperkt tot een jaar en bewaart alleen samenvattingen", async () => {
   const env = makeEnv();
   const cookie = await signup(env);

@@ -11,7 +11,7 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 - Keuze uit vermogensmeter, hartslagmeter, beide of geen van beide.
 - TrainingPeaks-exporten (ZIP met FIT/CSV) importeren; gegevens ouder dan 365 dagen worden genegeerd. Alleen weektotalen en meetwaardegemiddelden worden bewaard; de ruwe bestanden niet.
 - AI stelt maximaal 5 vervolgvragen in een chatweergave, maakt een overzicht van alle weken en werkt week 1 uit.
-- Chat met de coach per trainingsdag: stel vragen of vraag een aanpassing van alleen die workout.
+- Eén doorlopende chat met de coach, snel bereikbaar via het menu. Je kunt algemene vragen stellen of een week en training als context kiezen; alleen die workout kan worden aangepast.
 - Kopieer per workout een TrainingPeaks AI-prompt met passende hartslag-, vermogens- of RPE-doelen. Dit is geen automatische koppeling met TrainingPeaks.
 - Wekelijkse check-in (hoeveel gedaan, hoe voelde het, klachten) waarna de volgende week wordt gemaakt.
 - Schema van een week downloaden als agenda (.ics).
@@ -27,7 +27,7 @@ Nog niet: wachtwoord vergeten (er is geen e-mail), automatische koppeling met Ga
 - Wachtwoorden worden met PBKDF2 versleuteld, sessies zitten in een beveiligde cookie, schrijfacties van andere websites worden geweigerd, en er zijn limieten voor registreren, inloggen en AI-gebruik per gebruiker en per dag.
 - IP-adressen worden nooit zelf opgeslagen, alleen een dagelijks wisselende hash voor de limieten.
 - ZIP-uploads zijn beperkt tot 20 MB en worden alleen in het geheugen verwerkt. Geïmporteerde samenvattingen kunnen eigen meetwaarden bevatten en worden, net als de intake, naar Groq gestuurd om het schema te maken.
-- Coachgesprekken worden per workout bewaard (maximaal 100 berichten per account); de server controleert elke voorgestelde aanpassing voordat die wordt opgeslagen.
+- Coachberichten worden met hun week- en trainingscontext bewaard (maximaal 100 berichten per account). De chat gebruikt recente berichten als gesprekscontext; de server controleert elke voorgestelde aanpassing voordat die wordt opgeslagen.
 
 ## Uitrollen op Cloudflare
 

@@ -530,7 +530,38 @@ async function threadMessages(env, userId, weekNo, dayNo) {
   }));
 }
 
+async function recentCoachMessages(env, userId) {
+  const result = await env.DB.prepare(
+    "SELECT week_no, day_no, role, content, updated, created_at FROM coach_messages WHERE user_id = ? ORDER BY created_at DESC LIMIT 20"
+  ).bind(userId).all();
+  return (result.results || []).reverse().map(message => ({
+    week_no: message.week_no,
+    day_no: message.day_no,
+    role: message.role,
+    content: message.content,
+    updated: Boolean(message.updated),
+    created_at: message.created_at
+  }));
+}
+
 async function getCoachChat(url, env, user) {
+  if (url.searchParams.get("global") === "1") {
+    const plan = await env.DB.prepare("SELECT 1 FROM plans WHERE user_id = ?").bind(user.id).first();
+    if (!plan) return json({ error: "no_plan", message: "Je hebt nog geen schema." }, 404);
+    const result = await env.DB.prepare(
+      "SELECT week_no, day_no, role, content, updated, created_at FROM coach_messages WHERE user_id = ? ORDER BY created_at DESC LIMIT 100"
+    ).bind(user.id).all();
+    return json({
+      messages: (result.results || []).reverse().map(message => ({
+        week_no: message.week_no,
+        day_no: message.day_no,
+        role: message.role,
+        content: message.content,
+        updated: Boolean(message.updated),
+        created_at: message.created_at
+      }))
+    });
+  }
   const params = coachThreadParams(url);
   if (!params) return json({ error: "invalid", message: "Kies een geldige week en trainingsdag." }, 400);
   const week = await env.DB.prepare("SELECT 1 FROM weeks WHERE user_id = ? AND week_no = ?")
@@ -544,6 +575,7 @@ async function coachChat(request, env, user) {
   const weekNo = Number(body.week_no);
   const dayNo = Number(body.day_no);
   const message = cleanText(body.bericht, 1000);
+  const continuous = body.global === true;
   if (!Number.isInteger(weekNo) || weekNo < 1 || weekNo > 16 ||
       !Number.isInteger(dayNo) || dayNo < 0 || dayNo > 6 || message.length < 1) {
     return json({ error: "invalid", message: "Kies een training en schrijf een bericht." }, 400);
@@ -565,9 +597,12 @@ async function coachChat(request, env, user) {
   const gate = await aiAllowed(env, user);
   if (!gate.ok) return gate.res;
 
-  const history = await threadMessages(env, user.id, weekNo, dayNo);
+  const history = continuous
+    ? await recentCoachMessages(env, user.id)
+    : await threadMessages(env, user.id, weekNo, dayNo);
   const transcript = history.slice(-10).map(item => ({ role: item.role, content: item.content }));
   const prompt = `<coachgesprek>${JSON.stringify(transcript)}</coachgesprek>\n` +
+    (continuous ? "Dit is een doorlopend gesprek. Eerdere berichten kunnen over een andere week of training gaan. Gebruik onderstaande geselecteerde training alleen voor aanpassingen. Als onduidelijk is welke training de gebruiker wil aanpassen, vraag eerst om verduidelijking en wijzig niets.\n" : "") +
     `<gebruiker>${JSON.stringify(intake)}</gebruiker>\n` +
     `Trainingsweek ${weekNo}, totaal ${week.totaal_minuten} minuten; maximale weekomvang ${intake.uren_per_week * 63} minuten.\n` +
     `Geselecteerde dag: ${DAG_NAMEN[dayNo]} (dag ${dayNo}). Huidige training: ${JSON.stringify(selectedWorkout)}.\n` +

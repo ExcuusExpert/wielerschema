@@ -110,13 +110,17 @@ await submit(find(root.app, e => e.tagName === "FORM")[0]);
 ok(text().includes("Toertocht van 120 km") && text().includes("Week 1") && text().includes("Rustige opbouw"), "schema getoond met week 1");
 ok(find(root.app, e => e.className.includes("day")).length >= 7, "zeven dagkaarten");
 ok(text().includes("Hoe ging week 1?"), "check-in formulier onder de laatste week");
-ok(text().includes("Chat met je AI-coach") && text().includes("Kopieer prompt voor TrainingPeaks AI"), "chatcoach en TrainingPeaks-workoutprompt zichtbaar");
+ok(text().includes("Praat met je coach") && text().includes("Kopieer prompt voor TrainingPeaks AI"), "doorlopende coachchat en TrainingPeaks-workoutprompt zichtbaar");
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer prompt voor TrainingPeaks AI")[0].click();
 await tick();
 ok(sandbox.copiedText.includes("Build Intervals By: Duration") && sandbox.copiedText.includes("Intensity: Heart Rate") && sandbox.copiedText.includes("hartslagzones"), "TrainingPeaks-prompt gebruikt hartslagzones en workoutduur");
-const coachForm = find(root.app, e => e.tagName === "FORM" && e.children.some(c => c.tagName === "BUTTON" && c.textContent === "Stuur naar de coach"))[0];
+const coachForm = find(root.app, e => e.tagName === "FORM" &&
+  find(e, child => child.tagName === "BUTTON" && child.textContent === "Stuur naar de coach").length)[0];
 find(coachForm, e => e.tagName === "TEXTAREA")[0].value = "Maak deze training rustiger.";
-await submit(coachForm);
+const chatSending = submit(coachForm);
+await tick();
+ok(text().includes("De coach is je bericht aan het verwerken"), "coachchat toont een zichtbare laadstatus tijdens antwoord");
+await chatSending;
 ok(text().includes("Ik heb deze training aangepast") && text().includes("Training bijgewerkt"), "coachchat bewaart antwoord en past gekozen workout aan");
 
 const checkin = find(root.app, e => e.tagName === "FORM" && e.children.some(c => c.tagName === "BUTTON" && c.textContent === "Maak week 2"))[0];
