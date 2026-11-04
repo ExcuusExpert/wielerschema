@@ -28,6 +28,7 @@ Nog niet: wachtwoord vergeten (er is geen e-mail), automatische koppeling met Ga
 - De AI schrijft nooit rechtstreeks naar de database: de worker controleert elk antwoord. Trainingen en wijzigingen worden opgeschoond en de weektotalen begrensd op het maximale aantal uren; een concreet genoemd evenement kan op de opgegeven dag worden gezet.
 - Meldt iemand klachten, dan wordt de volgende week hard begrensd op de helft, met een vaste waarschuwing om een arts of fysiotherapeut te raadplegen (dat staat los van wat de AI zegt).
 - Wachtwoorden worden met PBKDF2 versleuteld, sessies zitten in een beveiligde cookie, schrijfacties van andere websites worden geweigerd, en er zijn limieten voor registreren, inloggen en AI-gebruik per gebruiker en per dag.
+- Voor ontwikkelaars kan `AI_UNLIMITED_USER_IDS` in Cloudflare een komma-gescheiden lijst met account-ID's bevatten; die accounts vallen niet onder de limiet per gebruiker. De gezamenlijke AI-noodlimiet blijft gelden.
 - IP-adressen worden nooit zelf opgeslagen, alleen een dagelijks wisselende hash voor de limieten.
 - ZIP-uploads zijn beperkt tot 20 MB en worden alleen in het geheugen verwerkt. Geïmporteerde samenvattingen kunnen eigen meetwaarden bevatten en worden, net als de intake, naar Groq gestuurd om het schema te maken.
 - Coachberichten worden bewaard (maximaal 100 per account). De chat gebruikt recente berichten als gesprekscontext; de server controleert elke voorgestelde aanpassing voordat die wordt opgeslagen.

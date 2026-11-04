@@ -411,6 +411,10 @@ function aiError(r) {
 async function aiAllowed(env, user) {
   const day = today();
   if (!(await hit(env, `ai:g:${day}`, AI_GLOBAL_PER_DAY))) return { ok: false, res: json({ error: "busy", message: "De dienst is vandaag druk bezet. Probeer het morgen opnieuw." }, 503) };
+  const unlimitedUsers = typeof env.AI_UNLIMITED_USER_IDS === "string"
+    ? env.AI_UNLIMITED_USER_IDS.split(",").map(id => id.trim()).filter(Boolean)
+    : [];
+  if (unlimitedUsers.includes(user.id)) return { ok: true };
   if (!(await hit(env, `ai:u:${user.id}:${day}`, AI_PER_USER_PER_DAY))) return { ok: false, res: json({ error: "ai_limit", message: `Je hebt vandaag het maximum van ${AI_PER_USER_PER_DAY} AI-aanvragen bereikt. Probeer het morgen opnieuw.` }, 429) };
   return { ok: true };
 }

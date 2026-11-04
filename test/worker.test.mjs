@@ -616,6 +616,19 @@ test("dagelijkse AI-limiet per gebruiker", async () => {
   assert.equal(last.data.error, "ai_limit");
 });
 
+test("ontwikkelaarsaccount kan boven de gebruikerslimiet; gezamenlijke AI-noodlimiet blijft actief", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env, "ontwikkelaar");
+  const userId = env.DB.db.prepare("SELECT id FROM users WHERE username = ?").get("ontwikkelaar").id;
+  env.AI_UNLIMITED_USER_IDS = `andere-id, ${userId}`;
+  for (let i = 0; i < 13; i++) {
+    const response = await api(env, "POST", "/api/intake/questions", { intake: INTAKE }, { cookie });
+    assert.equal(response.status, 200, JSON.stringify(response.data));
+  }
+  assert.equal(env.DB.db.prepare("SELECT COUNT(*) AS n FROM counters WHERE key LIKE 'ai:u:%'").get().n, 0);
+  assert.equal(env.DB.db.prepare("SELECT n FROM counters WHERE key LIKE 'ai:g:%'").get().n, 13);
+});
+
 test("check-in: volgende week, geen dubbele check-in, klachten maken het licht", async () => {
   const env = makeEnv();
   const cookie = await signup(env);
