@@ -136,6 +136,23 @@ ok(text().includes("Dagmetingen en analyse bekijken") && text().includes("Kopiee
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer prompt voor TrainingPeaks AI")[0].click();
 await tick();
 ok(sandbox.copiedText.includes("Build Intervals By: Duration") && sandbox.copiedText.includes("Intensity: Heart Rate") && sandbox.copiedText.includes("hartslagzones"), "TrainingPeaks-prompt gebruikt hartslagzones en workoutduur");
+const editButton = find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Handmatig aanpassen")[0];
+editButton.click();
+const editForm = find(root.app, e => e.tagName === "FORM" && e.className.includes("workout-editor"))[0];
+find(editForm, e => e.tagName === "INPUT" && e.attrs.type === "number")[0].value = "70";
+find(editForm, e => e.tagName === "INPUT" && e.attrs.type === "text")[0].value = "Handmatige duurrit";
+find(editForm, e => e.tagName === "TEXTAREA")[0].value = "70 minuten rustig, RPE 3.";
+const zoneSelect = find(editForm, e => e.tagName === "SELECT")[1];
+for (const option of zoneSelect.children) delete option.attrs.selected;
+zoneSelect.children.find(option => option.attrs.value === "Z1").attrs.selected = "";
+await submit(editForm);
+ok(text().includes("Handmatige duurrit") && text().includes("70 min"), "training handmatig aanpassen slaat wijzigingen in het schema op");
+find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer prompt voor TrainingPeaks AI")[0].click();
+await tick();
+ok(sandbox.copiedText.includes("Duration: 70 minuten") &&
+  sandbox.copiedText.includes("Target: Z1 volgens mijn ingestelde hartslagzones, 70 minuten rustig, RPE 3.") &&
+  sandbox.copiedText.includes("Training: Handmatige duurrit."),
+  "TrainingPeaks-prompt gebruikt de nieuwste handmatig opgeslagen training");
 
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Analyse")[0].click();
 ok(text().includes("Dagmetingen toevoegen") && text().includes("Body Battery hoog"), "analysepagina biedt herstelmetingen");

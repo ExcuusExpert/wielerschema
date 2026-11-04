@@ -62,6 +62,7 @@ fieldset.days legend { padding: 0 6px; font-weight: 600; font-size: .92rem; }
 .tip { background: var(--card2); border-radius: 10px; padding: 12px 14px; margin-top: 4px; }
 .training-import { border-top: 1px solid var(--line); padding-top: 16px; }
 .import-summary { color: var(--ok); }
+.workout-editor { width: 100%; margin-top: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--card2); }
 .coach-panel { scroll-margin-top: 84px; gap: 17px; }
 .coach-heading { display: flex; align-items: center; gap: 13px; }
 .coach-heading h2 { font-size: 1.4rem; letter-spacing: -.025em; }

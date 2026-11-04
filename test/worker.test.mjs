@@ -262,6 +262,53 @@ test("vragen van de coach", async () => {
   assert.equal(r.data.vragen[0].id, "v1");
 });
 
+test("training handmatig aanpassen slaat alleen een geldige wijziging op", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env);
+  const created = await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  assert.equal(created.status, 200);
+  const before = created.data.weeks[0];
+  const unchanged = before.dagen.find(day => day.dag === 1);
+  const edit = workout => api(env, "POST", "/api/plan/workout", {
+    week_no: 1, day_no: 3, workout
+  }, { cookie });
+
+  assert.equal((await api(env, "POST", "/api/plan/workout", {
+    week_no: 1, day_no: 3, workout: { type: "tempo", minuten: 55, zone: "Z2", titel: "Tempo", beschrijving: "RPE 5." }
+  })).status, 401);
+  assert.equal((await edit({ type: "tempo", minuten: 55, zone: "Z9", titel: "Tempo", beschrijving: "RPE 5." })).status, 400);
+  assert.equal((await edit({ type: "tempo", minuten: 360, zone: "Z2", titel: "Tempo", beschrijving: "RPE 5." })).status, 400);
+  assert.equal((await api(env, "POST", "/api/plan/workout", {
+    week_no: 1, day_no: 2, workout: { type: "tempo", minuten: 55, zone: "Z2", titel: "Tempo", beschrijving: "RPE 5." }
+  }, { cookie })).status, 400);
+
+  const updated = await edit({
+    type: "tempo", minuten: 55, zone: "Z3", titel: "Handmatige tempotraining", beschrijving: "55 minuten, RPE 5."
+  });
+  assert.equal(updated.status, 200, JSON.stringify(updated.data));
+  assert.equal(updated.data.week.dagen.find(day => day.dag === 3).titel, "Handmatige tempotraining");
+  assert.equal(updated.data.week.dagen.find(day => day.dag === 3).minuten, 55);
+  assert.deepEqual(updated.data.week.dagen.find(day => day.dag === 1), unchanged);
+  assert.equal(updated.data.week.totaal_minuten,
+    updated.data.week.dagen.filter(day => day.type !== "rust").reduce((sum, day) => sum + day.minuten, 0));
+  const saved = await api(env, "GET", "/api/plan", undefined, { cookie });
+  assert.equal(saved.data.weeks[0].dagen.find(day => day.dag === 3).titel, "Handmatige tempotraining");
+
+  await api(env, "POST", "/api/plan/checkin", {
+    week_no: 1, gedaan_pct: 75, uren_gedaan: 4, gevoel: 3, klachten: true
+  }, { cookie });
+  const restricted = await api(env, "POST", "/api/plan/workout", {
+    week_no: 2, day_no: 3,
+    workout: { type: "vo2max", minuten: 30, zone: "Z5", titel: "Interval", beschrijving: "Hard." }
+  }, { cookie });
+  assert.equal(restricted.status, 400);
+  const safe = await api(env, "POST", "/api/plan/workout", {
+    week_no: 2, day_no: 3,
+    workout: { type: "duurrit", minuten: 30, zone: "Z2", titel: "Rustige duur", beschrijving: "Rustig, RPE 2." }
+  }, { cookie });
+  assert.equal(safe.status, 200, JSON.stringify(safe.data));
+});
+
 test("coachchat past een expliciet aangevraagde training direct toe en bewaart de keuze", async () => {
   const env = makeEnv();
   const cookie = await signup(env);

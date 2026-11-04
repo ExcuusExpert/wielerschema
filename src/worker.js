@@ -487,6 +487,7 @@ async function handleApi(request, env, url) {
   if (path === "/api/intake/questions" && method === "POST") return questions(request, env, user);
   if (path === "/api/plan/create" && method === "POST") return createPlan(request, env, user);
   if (path === "/api/plan/checkin" && method === "POST") return checkin(request, env, user);
+  if (path === "/api/plan/workout" && method === "POST") return updateWorkout(request, env, user);
   if (path === "/api/account/export" && method === "GET") return exportAccount(env, user);
   if (path === "/api/account/delete" && method === "POST") return deleteAccount(request, env, user);
   return json({ error: "not_found" }, 404);
@@ -552,6 +553,65 @@ async function loadPlan(env, userId) {
 async function getPlan(env, user) {
   const data = await loadPlan(env, user.id);
   return json(data || { plan: null, weeks: [] });
+}
+
+async function updateWorkout(request, env, user) {
+  const body = await readJson(request);
+  const weekNo = Number(body.week_no);
+  const dayNo = Number(body.day_no);
+  const raw = body.workout;
+  if (!Number.isInteger(weekNo) || weekNo < 1 || weekNo > 16 ||
+      !Number.isInteger(dayNo) || dayNo < 0 || dayNo > 6 ||
+      !raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return json({ error: "invalid", message: "Controleer de gekozen week en training." }, 400);
+  }
+  const planRow = await env.DB.prepare("SELECT intake FROM plans WHERE user_id = ?").bind(user.id).first();
+  if (!planRow) return json({ error: "no_plan", message: "Je hebt nog geen schema." }, 404);
+  const weekRow = await env.DB.prepare("SELECT detail FROM weeks WHERE user_id = ? AND week_no = ?")
+    .bind(user.id, weekNo).first();
+  if (!weekRow) return json({ error: "not_found", message: "Deze trainingsweek bestaat niet." }, 404);
+
+  const intake = JSON.parse(planRow.intake);
+  if (!intake.dagen.includes(dayNo)) {
+    return json({ error: "invalid_day", message: "Kies een dag die je als trainingsdag hebt ingesteld." }, 400);
+  }
+  if (!TYPES.includes(raw.type) || !ZONES.includes(raw.zone)) {
+    return json({ error: "invalid_workout", message: "Kies een geldige training en zone." }, 400);
+  }
+  const isRest = raw.type === "rust";
+  const workout = isRest ? {
+    dag: dayNo, type: "rust", minuten: 0, zone: "", titel: "Rustdag", beschrijving: ""
+  } : {
+    dag: dayNo,
+    type: raw.type,
+    minuten: Number(raw.minuten),
+    zone: raw.zone,
+    titel: cleanText(raw.titel, 80),
+    beschrijving: cleanText(raw.beschrijving, 500)
+  };
+  if (!isRest && (!Number.isInteger(workout.minuten) || workout.minuten < 20 || workout.minuten > 360 ||
+      !workout.titel || !workout.beschrijving)) {
+    return json({ error: "invalid_workout", message: "Vul een titel en beschrijving in en kies een duur van 20 tot 360 hele minuten." }, 400);
+  }
+
+  const week = JSON.parse(weekRow.detail);
+  if (week.waarschuwing && !(
+    isRest || (["duurrit", "herstelrit"].includes(workout.type) && ["Z1", "Z2"].includes(workout.zone))
+  )) {
+    return json({ error: "health_limit", message: "Bij de gezondheidswaarschuwing kun je alleen rust of een rustige Z1/Z2-training opslaan." }, 400);
+  }
+  const days = week.dagen.map(day => day.dag === dayNo ? workout : day);
+  const workouts = days.filter(day => day.type !== "rust");
+  if (!workouts.length) return json({ error: "empty_week", message: "Een schemaweek moet minstens één training bevatten." }, 400);
+  const total = workouts.reduce((sum, day) => sum + day.minuten, 0);
+  if (total > intake.uren_per_week * 63) {
+    return json({ error: "week_limit", message: "Deze wijziging overschrijdt je maximale trainingsduur voor de week." }, 400);
+  }
+
+  const updatedWeek = { ...week, dagen: days, totaal_minuten: total };
+  await env.DB.prepare("UPDATE weeks SET detail = ? WHERE user_id = ? AND week_no = ?")
+    .bind(JSON.stringify(updatedWeek), user.id, weekNo).run();
+  return json({ week: updatedWeek });
 }
 
 const DAILY_METRIC_LIMITS = {

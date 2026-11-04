@@ -12,6 +12,7 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 - TrainingPeaks-exporten (ZIP met FIT/CSV) importeren; gegevens ouder dan 365 dagen worden genegeerd. Alleen weektotalen en meetwaardegemiddelden worden bewaard; de ruwe bestanden niet.
 - AI stelt maximaal 5 vervolgvragen in een chatweergave, maakt een overzicht van alle weken en werkt week 1 uit.
 - Eén doorlopende, WhatsApp-achtige chat met de coach; de coach gebruikt je schema zonder dat je week of dag hoeft te kiezen.
+- Pas trainingsdagen ook zelf aan: trainingstype, duur, zone, titel en beschrijving. Handmatige wijzigingen worden direct opgeslagen; de weeklimiet en gezondheidswaarschuwingen blijven gelden.
 - Kopieer per workout een TrainingPeaks AI-prompt met passende hartslag-, vermogens- of RPE-doelen. Dit is geen automatische koppeling met TrainingPeaks.
 - Na afloop vraagt de coach in de chat hoe je week ging; op basis van je antwoord maakt die de volgende week.
 - Dashboard met analyse van geïmporteerde trainingsweken en handmatige dagelijkse herstelmetingen (rusthartslag, slaap, Body Battery, stress en HRV; maximaal één jaar terug).

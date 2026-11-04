@@ -7,6 +7,7 @@ const TYPE_LABEL = {
   rust: "Rust", duurrit: "Duurrit", tempo: "Tempo", drempel: "Drempel", vo2max: "VO2max", sprint: "Sprint",
   kracht: "Kracht", techniek: "Techniek", herstelrit: "Herstelrit", race: "Wedstrijd", mtb: "MTB"
 };
+const ZONE_OPTIONS = ["", "Z1", "Z2", "Z3", "Z4", "Z5", "Z6"];
 const FASE_LABEL = { basis: "Basis", opbouw: "Opbouw", piek: "Piek", afbouw: "Afbouw", herstel: "Herstel" };
 
 const app = document.getElementById("app");
@@ -510,28 +511,98 @@ function trainingPeaksPrompt(plan, dag) {
 
 function dayCard(plan, week, dag) {
   const date = addDays(plan.start_date, (week.week_no - 1) * 7 + dag.dag);
-  if (dag.type === "rust") {
-    return h("article", { class: "day rest" }, h("h4", { text: `${DAGEN_KORT[dag.dag]} ${dateLabel(date).split(" ").slice(1).join(" ")}` }), h("p", { class: "muted", text: "Rust" }));
-  }
   const copyStatus = h("span", { class: "hint", role: "status" });
-  return h("article", { class: `day t-${dag.type}` },
+  const article = h("article", { class: `day ${dag.type === "rust" ? "rest" : `t-${dag.type}`}` },
     h("h4", { text: `${DAGEN_KORT[dag.dag]} ${dateLabel(date).split(" ").slice(1).join(" ")}` }),
-    h("p", { class: "badge", text: `${TYPE_LABEL[dag.type] || dag.type}${dag.zone ? " · " + dag.zone : ""}` }),
-    h("p", { class: "dur", text: minutesText(dag.minuten) }),
-    h("p", { class: "dtitle", text: dag.titel }),
-    dag.beschrijving ? h("p", { class: "muted", text: dag.beschrijving }) : null,
-    h("button", {
+    dag.type === "rust" ? h("p", { class: "muted", text: "Rust" }) : h("div", {},
+      h("p", { class: "badge", text: `${TYPE_LABEL[dag.type] || dag.type}${dag.zone ? " · " + dag.zone : ""}` }),
+      h("p", { class: "dur", text: minutesText(dag.minuten) }),
+      h("p", { class: "dtitle", text: dag.titel }),
+      dag.beschrijving ? h("p", { class: "muted", text: dag.beschrijving }) : null),
+    dag.type !== "rust" ? h("button", {
       class: "btn ghost small", type: "button", text: "Kopieer prompt voor TrainingPeaks AI",
       onclick: async () => {
         try {
-          await navigator.clipboard.writeText(trainingPeaksPrompt(plan, dag));
+          const currentPlan = state.data?.plan || plan;
+          const currentWeek = state.data?.weeks.find(item => item.week_no === week.week_no);
+          const currentWorkout = currentWeek?.dagen.find(item => item.dag === dag.dag) || dag;
+          await navigator.clipboard.writeText(trainingPeaksPrompt(currentPlan, currentWorkout));
           copyStatus.textContent = "Prompt gekopieerd. Plak deze in TrainingPeaks.";
         } catch {
           copyStatus.textContent = "Kopiëren lukte niet. Controleer of je browser klembordtoegang toestaat.";
         }
       }
-    }),
-    copyStatus);
+    }) : null,
+    dag.type !== "rust" ? copyStatus : null);
+  if (!plan.intake.dagen.includes(dag.dag)) return article;
+
+  const edit = h("button", {
+    class: "btn ghost small", type: "button", text: "Handmatig aanpassen",
+    onclick: () => {
+      edit.disabled = true;
+      const error = h("p", { class: "error", role: "alert" });
+      const status = h("p", { class: "muted", role: "status" });
+      const type = h("select", {}, Object.entries(TYPE_LABEL).map(([value, label]) =>
+        h("option", { value, selected: dag.type === value, text: label })));
+      const minutes = h("input", { type: "number", min: 20, max: 360, step: 1, value: dag.minuten || 60 });
+      const zone = h("select", {}, ZONE_OPTIONS.map(value =>
+        h("option", { value, selected: (dag.zone || "") === value, text: value || "Geen zone" })));
+      const title = h("input", { type: "text", maxlength: 80, value: dag.type === "rust" ? "" : dag.titel });
+      const description = h("textarea", { rows: 3, maxlength: 500 }, dag.type === "rust" ? "" : dag.beschrijving);
+      const updateRequirements = () => {
+        const resting = type.value === "rust";
+        minutes.required = !resting;
+        title.required = !resting;
+        description.required = !resting;
+        minutes.disabled = resting;
+        zone.disabled = resting;
+        title.disabled = resting;
+        description.disabled = resting;
+      };
+      type.addEventListener("change", updateRequirements);
+      updateRequirements();
+      const cancel = h("button", {
+        class: "btn ghost small", type: "button", text: "Annuleren",
+        onclick: () => { editor.remove(); edit.disabled = false; }
+      });
+      const save = h("button", { class: "btn small", type: "submit", text: "Wijziging opslaan" });
+      const editor = h("form", {
+        class: "workout-editor stack",
+        onsubmit: async event => {
+          event.preventDefault();
+          error.textContent = "";
+          const done = busyButton(save, "Schema opslaan…", status);
+          try {
+            await api("POST", "/api/plan/workout", {
+              week_no: week.week_no,
+              day_no: dag.dag,
+              workout: {
+                type: type.value,
+                minuten: minutes.value ? Number(minutes.value) : 0,
+                zone: zone.value,
+                titel: title.value,
+                beschrijving: description.value
+              }
+            });
+            state.data = await api("GET", "/api/plan");
+            viewPlan();
+          } catch (e) {
+            error.textContent = e.message;
+            done();
+          }
+        }
+      },
+      field("Trainingstype", type),
+      h("div", { class: "grid2" }, field("Duur in minuten", minutes), field("Trainingszone", zone)),
+      field("Titel", title),
+      field("Beschrijving", description),
+      error, status,
+      h("div", { class: "row" }, save, cancel));
+      article.appendChild(editor);
+    }
+  });
+  article.appendChild(edit);
+  return article;
 }
 
 function checkinIsDue(plan, week) {
