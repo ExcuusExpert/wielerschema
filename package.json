@@ -6,9 +6,5 @@
     "test": "node --test test/worker.test.mjs",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy"
-  },
-  "dependencies": {
-    "fflate": "^0.8.3",
-    "fit-file-parser": "^6.2.7"
   }
 }

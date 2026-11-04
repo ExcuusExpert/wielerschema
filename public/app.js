@@ -15,7 +15,7 @@ const nav = document.getElementById("nav");
 const sidebarAccount = document.getElementById("sidebar-account");
 const coachLauncher = document.getElementById("coach-launcher");
 
-const state = { user: null, data: null, week: 1, training: null, wellness: [], page: "plan", coachDraft: "" };
+const state = { user: null, data: null, week: 1, page: "plan", coachDraft: "" };
 
 // ---------- hulpfuncties ----------
 function h(tag, props, ...children) {
@@ -186,8 +186,7 @@ function renderNav(activePage = state.page) {
     ["plan", "Plan", () => state.data?.plan ? viewPlan() : viewIntake()],
     ["coach", "Coach", viewCoach],
     ["activities", "Activiteiten", viewActivities],
-    ["analytics", "Analyse", viewAnalytics],
-    ["import", "Import", viewImport],
+    ["garmin", "Garmin koppelen", viewGarmin],
     ["account", "Account", viewAccount]
   ];
   for (const [page, label, action] of pages) {
@@ -207,8 +206,6 @@ function renderNav(activePage = state.page) {
         await api("POST", "/api/logout", {}).catch(() => {});
         state.user = null;
         state.data = null;
-        state.wellness = [];
-        state.training = null;
         viewAuth("login");
       }
     })
@@ -303,7 +300,7 @@ function viewHome() {
       h("p", { text: "WielerSchema is een hulpmiddel en geen medische of professionele begeleiding. Ben je jonger dan 18, bespreek je schema en trainingsbelasting met je ouder/verzorger en een gekwalificeerde jeugdtrainer." })),
     h("section", { class: "landing-integrations" },
       h("h2", { text: "Koppelingen" }),
-      h("p", { text: "Je kunt activiteiten importeren vanuit TrainingPeaks. Strava, Garmin en Wahoo zijn nog niet gekoppeld; we voegen die pas toe als een betrouwbare officiële koppeling beschikbaar is." }))
+      h("p", { text: "Een Garmin-koppeling wordt voorbereid. Strava en Wahoo zijn nog niet gekoppeld; automatische synchronisatie werkt pas zodra officiële toegang beschikbaar is." }))
   );
 }
 
@@ -374,8 +371,7 @@ function viewIntake(prefill) {
       equipment.element,
       field("Jaren ervaring", jaren, "Optioneel."),
       field("Zijn er beperkingen waar de coach rekening mee moet houden?", beperkingen, "Optioneel. Deel alleen wat nodig is; dit is geen medische beoordeling."),
-      field("Nog iets dat helpt om je schema te maken?", opmerkingen, "Optioneel."),
-      h("p", { class: "tip", text: "Wil je je eerdere ritten gebruiken? Je kunt TrainingPeaks-gegevens importeren via de zijbalk." }))
+      field("Nog iets dat helpt om je schema te maken?", opmerkingen, "Optioneel."))
   ];
 
   function renderStep(index) {
@@ -488,111 +484,51 @@ function viewIntake(prefill) {
   renderStep(0);
 }
 
-function viewImport() {
-  state.page = "import";
-  renderNav("import");
-  const workouts = h("input", { type: "file", accept: ".zip,application/zip" });
-  const summary = h("input", { type: "file", accept: ".zip,application/zip" });
-  const metrics = h("input", { type: "file", accept: ".zip,application/zip" });
-  const consent = h("input", { type: "checkbox" });
-  const status = h("p", { class: "muted", role: "status" });
-  const submit = h("button", {
-    class: "btn", type: "button", text: "Bestanden importeren",
-    onclick: async () => {
-      status.textContent = "";
-      const selected = [["workouts", workouts], ["summary", summary], ["metrics", metrics]]
-        .filter(([, input]) => input.files && input.files.length)
-        .map(([name, input]) => [name, input.files[0]]);
-      if (!selected.length) { status.textContent = "Kies eerst minstens één ZIP-exportbestand."; return; }
-      if (!consent.checked) { status.textContent = "Geef eerst toestemming om deze trainingsgegevens met Groq te verwerken."; return; }
-      const formData = new FormData();
-      for (const [name, file] of selected) formData.append(name, file);
-      formData.append("ai_consent", "yes");
-      submit.disabled = true;
-      status.textContent = "De exports worden verwerkt…";
-      try {
-        const response = await fetch("/api/trainingpeaks/import", { method: "POST", credentials: "same-origin", body: formData });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(result.message || "De exports konden niet worden geïmporteerd.");
-        state.training = result.summary;
-        state.page = "import";
-        viewImport();
-      } catch (error) {
-        status.textContent = error.message;
-      } finally {
-        submit.disabled = false;
-      }
-    }
-  });
-  show(
-    h("div", { class: "page-heading" },
-      h("p", { class: "eyebrow", text: "GEGEVENS" }),
-      h("h1", { text: "TrainingPeaks importeren" }),
-      h("p", { class: "muted", text: "Optioneel: importeer maximaal één jaar aan workout- en Custom Metrics-exports. Dit is een bestandsimport, geen live koppeling." })),
-    state.training ? h("section", { class: "card import-summary-card stack" },
-      h("h2", { text: "Import beschikbaar voor je coach" }),
-      h("p", { text: `${state.training.activities} ritten in ${state.training.weeks.length} weken.` }),
-      h("p", { class: "muted", text: `Periode: ${state.training.period_start} t/m ${state.training.period_end}.` })) : null,
-    h("section", { class: "card stack" },
-      h("h2", { text: "Kies je ZIP-exporten" }),
-      h("p", { class: "muted", text: "Ruwe bestanden worden alleen in het geheugen verwerkt. We bewaren recente activiteitssamenvattingen en weektotalen zodat je ze kunt bekijken en je coach erover kunt vragen." }),
-      field("Workout Files — ZIP met FIT-bestanden", workouts),
-      field("Workout Summary — ZIP met CSV", summary),
-      field("Custom Metrics — ZIP met CSV", metrics),
-      h("p", { class: "hint", text: "Upload maximaal 20 MB tegelijk. Gegevens ouder dan 365 dagen worden genegeerd." }),
-      h("label", { class: "check" }, consent, h("span", { text: "Ik geef toestemming om de geïmporteerde trainingsgegevens, inclusief eventuele gezondheidswaarden, met Groq te verwerken." })),
-      status, submit)
-  );
-}
-
 function viewActivities() {
   state.page = "activities";
   renderNav("activities");
-  const activities = state.training?.recent_activities || [];
-  const sportLabels = { cycling: "Fietsen", running: "Hardlopen", swimming: "Zwemmen", skating: "Schaatsen", other: "Training" };
-  const stats = activities.slice(0, 30);
   show(
     h("div", { class: "page-heading" },
       h("p", { class: "eyebrow", text: "JOUW TRAININGEN" }),
       h("h1", { text: "Activiteiten" }),
-      h("p", { class: "muted", text: "Bekijk je recente trainingen en bespreek ze met je AI-coach." })),
-    h("section", { class: "card stack" },
-      h("div", { class: "row between" },
-        h("h2", { text: "Recente activiteiten" }),
-        h("button", { class: "btn ghost small", type: "button", text: "Activiteiten importeren", onclick: viewImport })),
-      activities.length ? h("div", { class: "activity-list" },
-        ...stats.map(activity => {
-          const date = new Date(`${activity.date}T00:00:00Z`).toLocaleDateString("nl-NL", { day: "numeric", month: "short", timeZone: "UTC" });
-          return h("article", { class: "activity-card" },
-            h("div", { class: "activity-date-badge" },
-              h("strong", { text: date }),
-              h("span", { text: dateLabel(activity.date).split(",")[0] })),
-            h("div", { class: "activity-main" },
-              h("h3", { text: activity.name || `${sportLabels[activity.sport] || "Training"} · ${dateLabel(activity.date)}` }),
-              h("p", { class: "muted", text: `${sportLabels[activity.sport] || "Training"} · ${activity.source === "fit" ? "FIT-bestand" : "CSV-export"}` }),
-              h("div", { class: "activity-metrics" },
-                Number(activity.minutes) > 0 ? h("span", {}, h("strong", { text: minutesText(Math.round(activity.minutes)) }), " duur") : null,
-                Number(activity.distance_km) > 0 ? h("span", {}, h("strong", { text: `${Number(activity.distance_km).toFixed(1)} km` })) : null,
-                Number(activity.power) > 0 ? h("span", {}, h("strong", { text: `${Math.round(activity.power)} W` }), " gem.") : null,
-                Number(activity.heart_rate) > 0 ? h("span", {}, h("strong", { text: `${Math.round(activity.heart_rate)} bpm` }), " gem.") : null)));
-        })) :
-        h("p", { class: "muted", text: "Nog geen activiteiten geïmporteerd. Voeg een TrainingPeaks-export toe om je recente trainingen hier te bekijken." })),
-    activities.length ? h("section", { class: "card activity-reflection stack" },
-      h("div", {},
-        h("h2", { text: "Wat valt je coach op?" }),
-        h("p", { class: "muted", text: "De coach kan je recente activiteitssamenvattingen gebruiken om patronen te bespreken. Het is geen medische beoordeling." })),
-      h("button", {
-        class: "btn", type: "button", text: "Bespreek mijn activiteiten met de coach",
-        onclick: () => {
-          state.coachDraft = "Kun je mijn recente activiteiten kort samenvatten en voorzichtig aangeven wat je opvalt aan mijn training en herstel? Vraag door als je informatie mist.";
-          viewCoach();
-        }
-      })) : null,
+      h("p", { class: "muted", text: "Je trainingen verschijnen hier zodra een officiële activiteitkoppeling beschikbaar is." })),
+    h("section", { class: "card stack activity-empty" },
+      h("span", { class: "activity-empty-icon", "aria-hidden": "true", text: "↗" }),
+      h("h2", { text: "Nog geen activiteiten gekoppeld" }),
+      h("p", { class: "muted", text: "We bouwen aan een veilige Garmin-koppeling. Als Garmin toegang verleent, kunnen je recente ritten hier verschijnen en kun je ze met je coach bespreken." }),
+      h("button", { class: "btn", type: "button", text: "Bekijk Garmin-koppeling", onclick: viewGarmin })),
     h("section", { class: "card integration-card stack" },
       h("div", { class: "integration-mark strava-mark", "aria-hidden": "true", text: "S" }),
       h("div", {},
-        h("h2", { text: "Strava-koppeling" }),
-        h("p", { class: "muted", text: "Nog niet beschikbaar. Een veilige koppeling vraagt om officiële toegang en jouw toestemming; daarom kun je nu nog niet automatisch synchroniseren." })))
+        h("h2", { text: "Strava" }),
+        h("p", { class: "muted", text: "Een koppeling met Strava is nog niet beschikbaar." })))
+  );
+}
+
+function viewGarmin() {
+  state.page = "garmin";
+  renderNav("garmin");
+  show(
+    h("div", { class: "page-heading" },
+      h("p", { class: "eyebrow", text: "ACTIVITEITEN AUTOMATISEREN" }),
+      h("h1", { text: "Koppel Garmin" }),
+      h("p", { class: "muted", text: "We bereiden de koppeling voor. Je Garmin-account is nog niet verbonden." })),
+    h("section", { class: "card garmin-card stack" },
+      h("div", { class: "garmin-heading" },
+        h("span", { class: "garmin-mark", "aria-hidden": "true" }, "G"),
+        h("div", {},
+          h("p", { class: "eyebrow", text: "GARMIN CONNECT" }),
+          h("h2", { text: "Automatische synchronisatie" }))),
+      h("p", { text: "Zodra Garmin de benodigde API-toegang verleent, kan WielerSchema je activiteiten en beschikbare trainings- en herstelgegevens automatisch ophalen." }),
+      h("ul", { class: "garmin-points" },
+        h("li", { text: "Recente activiteiten in je Activiteiten-tab." }),
+        h("li", { text: "Trainingscontext voor reflectie in de AI-coach." }),
+        h("li", { text: "Alleen gegevens die nodig zijn en waarvoor jij toestemming geeft." })),
+      h("p", { class: "integration-status" },
+        h("span", { class: "status-dot", "aria-hidden": "true" }),
+        "Koppeling nog niet actief — wacht op Garmin API-toegang."),
+      h("button", { class: "btn", type: "button", disabled: true, text: "Garmin binnenkort koppelen" }),
+      h("p", { class: "hint", text: "Er wordt nog geen Garmin-login gevraagd en er worden geen gegevens gesynchroniseerd." }))
   );
 }
 
@@ -909,7 +845,6 @@ function coachChat(plan, currentWeek) {
     try {
       await api("POST", "/api/coach/suggestions", { id, action });
       state.data = await api("GET", "/api/plan");
-      state.wellness = (await api("GET", "/api/wellness")).entries;
       viewCoach();
     } catch (e) {
       error.textContent = e.message;
@@ -956,7 +891,6 @@ function coachChat(plan, currentWeek) {
         input.value = "";
         state.coachDraft = "";
         state.data = await api("GET", "/api/plan");
-        state.wellness = (await api("GET", "/api/wellness")).entries;
         state.week = state.data.weeks[state.data.weeks.length - 1].week_no;
         if (reply.plan_updated) status.textContent = "Je volgende trainingsweek staat klaar.";
         viewCoach();
@@ -997,7 +931,7 @@ function viewCoach() {
     h("div", { class: "page-heading" },
       h("p", { class: "eyebrow", text: "PERSOONLIJKE BEGELEIDING" }),
       h("h1", { text: "Coach" }),
-      h("p", { class: "muted", text: "Eén doorlopend gesprek. De coach ziet je schema en je meest recente dagelijkse meetwaarden." })),
+      h("p", { class: "muted", text: "Eén doorlopend gesprek over je schema, trainingen en herstel." })),
     coachChat(state.data.plan, week)
   );
 }
@@ -1057,10 +991,6 @@ function viewPlan() {
       h("h3", { text: `Hoe ging week ${week.week_no}?` }),
       h("p", { class: "muted", text: "Vertel je coach in de chat wat je hebt getraind en hoe het voelde. Dan maakt die je volgende week." }),
       h("button", { class: "btn", type: "button", text: "Vertel het aan je coach", onclick: viewCoach })) : null,
-    h("section", { class: "card stack daily-metrics-promo" },
-      h("h2", { text: "Hoe herstel je?" }),
-      h("p", { class: "muted", text: "Vul je slaap, rusthartslag of Garmin Body Battery in. Je coach kan die gegevens meenemen in het gesprek." }),
-      h("button", { class: "btn ghost", type: "button", text: "Dagmetingen en analyse bekijken", onclick: viewAnalytics })),
     finished ? h("p", { class: "card", text: "Dit was de laatste week van je schema. Veel succes met je doel!" }) : null,
     h("p", { class: "muted" },
       h("button", { class: "link", type: "button", text: "Nieuw schema beginnen",
@@ -1070,142 +1000,6 @@ function viewPlan() {
           state.data = { plan: null, weeks: [] };
           viewIntake(plan.intake);
         } }))
-  );
-}
-
-const WELLNESS_LABELS = {
-  resting_hr: "Rusthartslag",
-  sleep_hours: "Slaap",
-  deep_sleep_hours: "Diepe slaap",
-  light_sleep_hours: "Lichte slaap",
-  rem_sleep_hours: "REM-slaap",
-  awake_hours: "Wakker",
-  body_battery_low: "Body Battery laag",
-  body_battery_high: "Body Battery hoog",
-  stress_avg: "Gemiddelde stress",
-  hrv_ms: "HRV"
-};
-const WELLNESS_UNITS = {
-  resting_hr: "bpm", sleep_hours: "u", deep_sleep_hours: "u", light_sleep_hours: "u",
-  rem_sleep_hours: "u", awake_hours: "u", body_battery_low: "/100", body_battery_high: "/100",
-  stress_avg: "/100", hrv_ms: "ms"
-};
-
-function viewAnalytics() {
-  state.page = "analytics";
-  renderNav("analytics");
-  const entries = state.wellness || [];
-  const todayEntry = entries.find(entry => entry.date === todayIso());
-  const todayMetrics = todayEntry || {};
-  const metricInputs = {};
-  const metricField = (key, min, max, step = 1) => {
-    const input = h("input", {
-      type: "number", min, max, step, name: key, placeholder: "Optioneel",
-      value: todayMetrics[key] ?? ""
-    });
-    metricInputs[key] = input;
-    return field(`${WELLNESS_LABELS[key]} (${WELLNESS_UNITS[key]})`, input);
-  };
-  const date = h("input", { type: "date", max: todayIso(), min: addDays(todayIso(), -365), value: todayIso(), required: true });
-  const note = h("textarea", { rows: 2, maxlength: 300, placeholder: "Optioneel" }, todayMetrics.note || "");
-  const saveStatus = h("p", { class: "muted", role: "status" });
-  const save = h("button", { class: "btn", type: "submit", text: todayEntry ? "Metingen bijwerken" : "Dagmetingen opslaan" });
-  date.addEventListener("change", () => {
-    const entry = entries.find(item => item.date === date.value);
-    for (const [key, input] of Object.entries(metricInputs)) input.value = entry?.[key] ?? "";
-    note.value = entry?.note || "";
-    save.textContent = entry ? "Metingen bijwerken" : "Dagmetingen opslaan";
-  });
-  const form = h("form", {
-    class: "card stack",
-    onsubmit: async event => {
-      event.preventDefault();
-      save.disabled = true;
-      saveStatus.textContent = "Dagmetingen opslaan…";
-      const metrics = Object.fromEntries(Object.entries(metricInputs)
-        .filter(([, input]) => input.value !== "")
-        .map(([key, input]) => [key, Number(input.value)]));
-      metrics.note = note.value;
-      try {
-        state.wellness = (await api("POST", "/api/wellness", { date: date.value, metrics })).entries;
-        viewAnalytics();
-      } catch (error) {
-        saveStatus.textContent = error.message;
-        save.disabled = false;
-      }
-    }
-  },
-  h("h2", { text: "Dagmetingen toevoegen" }),
-  h("p", { class: "muted", text: "Vul waarden van je horloge over, bijvoorbeeld Garmin Health. Lege velden worden niet opgeslagen. Dit is handmatige invoer, geen Garmin-koppeling." }),
-  field("Datum", date),
-  h("div", { class: "metrics-form-grid" },
-    metricField("resting_hr", 25, 250),
-    metricField("sleep_hours", 0, 24, 0.01),
-    metricField("deep_sleep_hours", 0, 24, 0.01),
-    metricField("light_sleep_hours", 0, 24, 0.01),
-    metricField("rem_sleep_hours", 0, 24, 0.01),
-    metricField("awake_hours", 0, 24, 0.01),
-    metricField("body_battery_low", 0, 100),
-    metricField("body_battery_high", 0, 100),
-    metricField("stress_avg", 0, 100),
-    metricField("hrv_ms", 0, 500, 0.1)),
-  field("Notitie", note),
-  h("p", { class: "hint", text: "Herstelwaarden zijn persoonlijke signalen. Ze stellen geen diagnose; bespreek zorgen met een zorgprofessional." }),
-  saveStatus, save);
-
-  const weeks = (state.training?.weeks || []).slice(-12);
-  const recent = weeks.slice(-4);
-  const sum = key => recent.reduce((total, item) => total + (Number(item[key]) || 0), 0);
-  const weightedAverage = key => {
-    const values = recent.filter(item => Number.isFinite(item[key]) && item.hours > 0);
-    const hours = values.reduce((total, item) => total + item.hours, 0);
-    return hours ? Math.round(values.reduce((total, item) => total + item[key] * item.hours, 0) / hours) : null;
-  };
-  const maxHours = Math.max(1, ...weeks.map(item => Number(item.hours) || 0));
-  const bars = weeks.length ? h("div", { class: "volume-chart", role: "img", "aria-label": "Trainingsuren per week" },
-    ...weeks.map(item => h("div", { class: "volume-column", title: `${dateLabel(item.week_start)}: ${item.hours} uur` },
-      h("span", { class: "volume-value", text: `${item.hours}u` }),
-      h("div", { class: "volume-track" },
-        h("div", { class: "volume-bar", style: `height:${Math.max(3, Math.round((Number(item.hours) || 0) / maxHours * 100))}%` })),
-      h("span", { class: "volume-date", text: dateLabel(item.week_start).slice(0, 6) })))) : null;
-  const customNames = [...new Set((state.training?.weeks || []).flatMap(item => Object.keys(item.metrics || {})))];
-  const customRows = customNames.map(name => {
-    const latest = [...(state.training?.weeks || [])].reverse().find(item => item.metrics && item.metrics[name] !== undefined);
-    return latest ? h("div", { class: "metric-row" },
-      h("span", { text: name }), h("strong", { text: `${latest.metrics[name]} · week ${dateLabel(latest.week_start)}` })) : null;
-  });
-  show(
-    h("div", { class: "page-heading" },
-      h("p", { class: "eyebrow", text: "JOUW TRENDS" }),
-      h("h1", { text: "Analyse" }),
-      h("p", { class: "muted", text: "Gebaseerd op je geïmporteerde TrainingPeaks-weektotalen en handmatige dagmetingen." })),
-    h("section", { class: "stats-grid" },
-      ...[
-        ["Trainingsuren · 4 weken", `${sum("hours").toFixed(1)} u`],
-        ["Ritten · 4 weken", String(sum("rides"))],
-        ["Afstand · 4 weken", `${Math.round(sum("distance_km"))} km`],
-        ["Gemiddeld vermogen", weightedAverage("avg_power") === null ? "—" : `${weightedAverage("avg_power")} W`],
-        ["Gemiddelde hartslag", weightedAverage("avg_heart_rate") === null ? "—" : `${weightedAverage("avg_heart_rate")} bpm`]
-      ].map(([label, value]) => h("article", { class: "stat-card" },
-        h("span", { class: "hint", text: label }), h("strong", { text: value })))),
-    h("section", { class: "card stack" },
-      h("div", { class: "row between" }, h("h2", { text: "Trainingsvolume" }), h("span", { class: "hint", text: "Uren per week · laatste 12 weken" })),
-      bars || h("p", { class: "muted", text: "Importeer TrainingPeaks-gegevens om je trainingsvolume te zien." })),
-    customNames.length ? h("section", { class: "card stack" },
-      h("h2", { text: "Eigen TrainingPeaks-metrics" }),
-      ...customRows) : null,
-    form,
-    h("section", { class: "card stack" },
-      h("h2", { text: "Recente dagmetingen" }),
-      entries.length ? h("div", { class: "wellness-list" },
-        ...entries.slice(0, 10).map(entry => h("article", { class: "wellness-entry" },
-          h("strong", { text: dateLabel(entry.date) }),
-          h("div", { class: "wellness-values" },
-            ...Object.entries(WELLNESS_LABELS).filter(([key]) => entry[key] !== undefined)
-              .map(([key, label]) => h("span", { class: "wellness-value" }, `${label}: `, h("strong", { text: `${entry[key]} ${WELLNESS_UNITS[key]}` }))),
-            entry.note ? h("span", { class: "wellness-value", text: entry.note }) : null)))) :
-        h("p", { class: "muted", text: "Nog geen dagmetingen ingevoerd." })),
-    h("p", { class: "hint", text: "Dit dashboard toont meetwaarden, geen diagnose. De coach kan mogelijke veranderingen bespreken maar kan overtraining niet vaststellen." })
   );
 }
 
@@ -1310,7 +1104,7 @@ function viewAccount() {
       }
     },
     h("h2", { text: "Account verwijderen" }),
-    h("p", { class: "muted", text: "Dit verwijdert je account, schema, chat, TrainingPeaks-samenvatting en dagelijkse metingen. Dat kan niet ongedaan worden gemaakt." }),
+    h("p", { class: "muted", text: "Dit verwijdert je account, schema en chat. Dat kan niet ongedaan worden gemaakt." }),
     field("Wachtwoord ter bevestiging", deletePassword), deleteError, deleteSubmit)
   );
 }
@@ -1323,8 +1117,6 @@ async function start() {
       state.user = me.username;
     }
     state.data = await api("GET", "/api/plan");
-    state.training = (await api("GET", "/api/trainingpeaks")).summary;
-    state.wellness = (await api("GET", "/api/wellness")).entries;
     state.profile = (await api("GET", "/api/account/profile")).profile;
     if (state.data.plan) {
       state.week = state.data.weeks[state.data.weeks.length - 1].week_no;

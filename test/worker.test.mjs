@@ -1,8 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { File } from "node:buffer";
-import { strToU8, zipSync } from "fflate";
 import worker from "../src/worker.js";
 
 const BASE = "https://wielerschema.test";
@@ -484,122 +482,24 @@ test("coach haalt de weekterugblik op in chat en maakt daarna de volgende week",
   assert.equal(plan.data.weeks[0].checkin.uren_gedaan, 4);
 });
 
-test("dagmetingen valideren invoer, bewaren tot een jaar en komen als context in de coachchat", async () => {
+test("oude import- en dagmetingstabellen worden verwijderd en de endpoints zijn uitgeschakeld", async () => {
   const env = makeEnv();
   const cookie = await signup(env);
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-  const saved = await api(env, "POST", "/api/wellness", {
-    date: yesterday,
-    metrics: { resting_hr: 52, sleep_hours: 7.5, deep_sleep_hours: 1.2, body_battery_low: 18, body_battery_high: 76, stress_avg: 31, hrv_ms: 54, note: "Voelde me uitgerust." }
-  }, { cookie });
-  assert.equal(saved.status, 200, JSON.stringify(saved.data));
-  assert.equal(saved.data.entries[0].resting_hr, 52);
-  assert.equal(saved.data.entries[0].note, "Voelde me uitgerust.");
-  assert.equal((await api(env, "GET", "/api/wellness", undefined, { cookie })).data.entries.length, 1);
-  assert.equal((await api(env, "POST", "/api/wellness", {
-    date: today, metrics: { body_battery_low: 80, body_battery_high: 20 }
-  }, { cookie })).status, 400);
-  assert.equal((await api(env, "POST", "/api/wellness", {
-    date: today, metrics: { resting_hr: 251 }
-  }, { cookie })).status, 400);
-  assert.equal((await api(env, "POST", "/api/wellness", {
-    date: future(1), metrics: { resting_hr: 52 }
-  }, { cookie })).status, 400);
-  const tooOld = new Date(Date.now() - 366 * 86400000).toISOString().slice(0, 10);
-  assert.equal((await api(env, "POST", "/api/wellness", {
-    date: tooOld, metrics: { resting_hr: 52 }
-  }, { cookie })).status, 400);
-
-  await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
-  const coach = await api(env, "POST", "/api/coach/chat", {
-    week_no: 1, day_no: 3, bericht: "Hoe herstel ik?"
-  }, { cookie });
-  assert.equal(coach.status, 200);
-  assert.ok(lastGroqPrompt.includes("52"));
-  assert.ok(lastGroqPrompt.includes("Voelde me uitgerust."));
-  assert.match(lastGroqPrompt, /stel geen medische diagnose/);
-});
-
-test("TrainingPeaks-import verwerkt ZIP/CSV, beperkt tot een jaar en bewaart alleen samenvattingen", async () => {
-  const env = makeEnv();
-  const cookie = await signup(env);
-  const today = new Date().toISOString().slice(0, 10);
-  const old = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
-  const summaryCsv = `Date,Duration,Distance,Average Power,Average Heart Rate,Activity Name,Sport\n${today},3600,25000,200,140,Clubrit,Fietsen\n${old},3600,25000,200,140,Oude rit,Fietsen\n`;
-  const metricsCsv = `Date,Weight,Sleep\n${today},75.5,8\n`;
-  const form = new FormData();
-  form.append("summary", new File([zipSync({ "workouts.csv": strToU8(summaryCsv) })], "summary.zip"));
-  const nestedMetrics = zipSync({ "metrics-export.zip": zipSync({ "metrics.csv": strToU8(metricsCsv) }) });
-  form.append("metrics", new File([nestedMetrics], "metrics.zip"));
-  form.append("ai_consent", "yes");
-  const res = await worker.fetch(new Request(BASE + "/api/trainingpeaks/import", {
-    method: "POST",
-    headers: { Cookie: cookie, "CF-Connecting-IP": "10.0.0.1" },
-    body: form
-  }), env);
-  const imported = await res.json();
-  assert.equal(res.status, 200, JSON.stringify(imported));
-  assert.equal(imported.summary.activities, 1);
-  assert.equal(imported.summary.weeks.length, 1);
-  assert.equal(imported.summary.weeks[0].hours, 1);
-  assert.equal(imported.summary.weeks[0].avg_power, 200);
-  assert.deepEqual(imported.summary.weeks[0].metrics, { Weight: 75.5, Sleep: 8 });
-  assert.equal(imported.summary.recent_activities.length, 1);
-  assert.equal(imported.summary.recent_activities[0].name, "Clubrit");
-  assert.equal(imported.summary.recent_activities[0].sport, "cycling");
-  const updateForm = new FormData();
-  updateForm.append("metrics", new File([zipSync({ "metrics.csv": strToU8(`Date,Weight\n${today},76\n`) })], "metrics.zip"));
-  updateForm.append("ai_consent", "yes");
-  const updateResponse = await worker.fetch(new Request(BASE + "/api/trainingpeaks/import", {
-    method: "POST", headers: { Cookie: cookie }, body: updateForm
-  }), env);
-  const merged = await updateResponse.json();
-  assert.equal(merged.summary.activities, 1);
-  assert.equal(merged.summary.weeks[0].avg_power, 200);
-  assert.deepEqual(merged.summary.weeks[0].metrics, { Weight: 76, Sleep: 8 });
-  const stored = env.DB.db.prepare("SELECT summary FROM training_history").get();
-  assert.ok(stored.summary.includes("Weight"));
-  assert.ok(!stored.summary.includes("workouts.csv"));
-  const savedSummary = (await api(env, "GET", "/api/trainingpeaks", undefined, { cookie })).data.summary;
-  assert.deepEqual(savedSummary.weeks, merged.summary.weeks);
-  assert.equal(savedSummary.activities, 1);
-  assert.equal(savedSummary.recent_activities.length, 1);
-  assert.equal(savedSummary.recent_activities[0].name, "Clubrit");
-  const otherCookie = await signup(env, "anders");
-  assert.equal((await api(env, "GET", "/api/trainingpeaks", undefined, { cookie: otherCookie })).data.summary, null);
-  const plan = await api(env, "POST", "/api/plan/create", { intake: { ...INTAKE, meter: "both", hr_max: 190, hr_threshold: 170 } }, { cookie });
-  assert.equal(plan.status, 200);
-  assert.equal(plan.data.plan.intake.meter, "both");
-  assert.match(lastGroqPrompt, /"avg_power":200/);
-  assert.match(lastGroqPrompt, /"Weight":76/);
-  const reflection = await api(env, "POST", "/api/coach/chat", {
-    week_no: 1, day_no: 0, bericht: "Kun je mijn recente ritten bekijken?", global: true
-  }, { cookie });
-  assert.equal(reflection.status, 200);
-  assert.ok(lastGroqPrompt.includes("<recente_activiteiten>"));
-  assert.ok(lastGroqPrompt.includes("Clubrit"));
-});
-
-test("TrainingPeaks-import vereist inloggen en ZIP-bestanden", async () => {
-  const env = makeEnv();
-  const noAuth = await worker.fetch(new Request(BASE + "/api/trainingpeaks/import", { method: "POST", body: new FormData() }), env);
-  assert.equal(noAuth.status, 401);
-  const cookie = await signup(env);
-  const validForm = new FormData();
-  validForm.append("summary", new File([zipSync({ "workouts.csv": strToU8("Date,Duration\n") })], "summary.zip"));
-  const noConsent = await worker.fetch(new Request(BASE + "/api/trainingpeaks/import", {
-    method: "POST", headers: { Cookie: cookie }, body: validForm
-  }), env);
-  assert.equal(noConsent.status, 400);
-  assert.equal((await noConsent.json()).error, "consent");
-  const form = new FormData();
-  form.append("summary", new File(["not a zip"], "summary.zip"));
-  form.append("ai_consent", "yes");
-  const res = await worker.fetch(new Request(BASE + "/api/trainingpeaks/import", {
-    method: "POST", headers: { Cookie: cookie }, body: form
-  }), env);
-  assert.equal(res.status, 400);
+  const db = env.DB.db;
+  db.exec("CREATE TABLE training_history (user_id TEXT PRIMARY KEY, summary TEXT NOT NULL, imported_at INTEGER NOT NULL, consent_at INTEGER NOT NULL)");
+  db.exec("CREATE TABLE daily_metrics (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, date TEXT NOT NULL, metrics TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)");
+  db.prepare("INSERT INTO training_history VALUES ('legacy', '{}', 0, 0)").run();
+  db.prepare("INSERT INTO daily_metrics VALUES ('legacy', 'legacy', '2026-01-01', '{}', 0, 0)").run();
+  env.DB = new FakeD1();
+  env.DB.db = db;
+  assert.equal((await api(env, "GET", "/api/me", undefined, { cookie })).status, 200);
+  for (const table of ["training_history", "daily_metrics"]) {
+    assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table), undefined);
+  }
+  assert.equal((await api(env, "GET", "/api/trainingpeaks", undefined, { cookie })).status, 404);
+  assert.equal((await api(env, "POST", "/api/trainingpeaks/import", {}, { cookie })).status, 404);
+  assert.equal((await api(env, "GET", "/api/wellness", undefined, { cookie })).status, 404);
+  assert.equal((await api(env, "POST", "/api/wellness", {}, { cookie })).status, 404);
 });
 
 test("schema maken: vangrails op dagen, minuten en tekst", async () => {
@@ -646,7 +546,11 @@ test("dagelijkse AI-limiet per gebruiker", async () => {
   const env = makeEnv();
   const cookie = await signup(env);
   let last;
-  for (let i = 0; i < 13; i++) last = await api(env, "POST", "/api/intake/questions", { intake: INTAKE }, { cookie });
+  for (let i = 0; i < 100; i++) {
+    last = await api(env, "POST", "/api/intake/questions", { intake: INTAKE }, { cookie });
+    assert.equal(last.status, 200, JSON.stringify(last.data));
+  }
+  last = await api(env, "POST", "/api/intake/questions", { intake: INTAKE }, { cookie });
   assert.equal(last.status, 429);
   assert.equal(last.data.error, "ai_limit");
 });
@@ -656,12 +560,12 @@ test("ontwikkelaarsaccount kan boven de gebruikerslimiet; gezamenlijke AI-noodli
   const cookie = await signup(env, "ontwikkelaar");
   const userId = env.DB.db.prepare("SELECT id FROM users WHERE username = ?").get("ontwikkelaar").id;
   env.AI_UNLIMITED_USER_IDS = `andere-id, ${userId}`;
-  for (let i = 0; i < 13; i++) {
+  for (let i = 0; i < 101; i++) {
     const response = await api(env, "POST", "/api/intake/questions", { intake: INTAKE }, { cookie });
     assert.equal(response.status, 200, JSON.stringify(response.data));
   }
   assert.equal(env.DB.db.prepare("SELECT COUNT(*) AS n FROM counters WHERE key LIKE 'ai:u:%'").get().n, 0);
-  assert.equal(env.DB.db.prepare("SELECT n FROM counters WHERE key LIKE 'ai:g:%'").get().n, 13);
+  assert.equal(env.DB.db.prepare("SELECT n FROM counters WHERE key LIKE 'ai:g:%'").get().n, 101);
 });
 
 test("check-in: volgende week, geen dubbele check-in, klachten maken het licht", async () => {
@@ -705,20 +609,17 @@ test("export bevat geen wachtwoordgegevens; account verwijderen wist alles", asy
   const env = makeEnv();
   const cookie = await signup(env, "wissen");
   await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
-  const today = new Date().toISOString().slice(0, 10);
-  await api(env, "POST", "/api/wellness", { date: today, metrics: { resting_hr: 52 } }, { cookie });
   await api(env, "POST", "/api/coach/chat", { week_no: 1, day_no: 3, bericht: "Maak deze training rustiger." }, { cookie });
   const exp = await api(env, "GET", "/api/account/export", undefined, { cookie });
   assert.equal(exp.status, 200);
   assert.ok(!JSON.stringify(exp.data).match(/salt|hash/));
   assert.equal(exp.data.gebruikersnaam, "wissen");
-  assert.equal(exp.data.dagelijkse_metrics[0].resting_hr, 52);
   assert.equal(exp.data.coachgesprekken.length, 2);
 
   assert.equal((await api(env, "POST", "/api/account/delete", { password: "verkeerd-wachtwoord" }, { cookie })).status, 401);
   assert.equal((await api(env, "POST", "/api/account/delete", { password: GOOD_PW }, { cookie })).status, 200);
   assert.equal(exp.data.profiel.birth_date, INTAKE.geboortedatum);
-  for (const table of ["users", "sessions", "plans", "weeks", "training_history", "daily_metrics", "coach_suggestions", "coach_messages", "account_profiles"]) {
+  for (const table of ["users", "sessions", "plans", "weeks", "coach_suggestions", "coach_messages", "account_profiles"]) {
     assert.equal(env.DB.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0, table);
   }
   assert.equal((await api(env, "GET", "/api/me", undefined, { cookie })).status, 401);

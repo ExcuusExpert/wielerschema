@@ -115,7 +115,7 @@ find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "geboortedatum")[0
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Volgende")[0].click();
 ok(text().includes("2. Jouw tijd"), "wizard gaat door naar beschikbare tijd");
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Volgende")[0].click();
-ok(text().includes("3. Jouw training") && text().includes("TrainingPeaks-gegevens"), "wizard gaat door naar trainingsgegevens");
+ok(text().includes("3. Jouw training") && text().includes("meetapparatuur"), "wizard gaat door naar trainingsgegevens");
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Vorige stap")[0].click();
 ok(text().includes("2. Jouw tijd") && find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "goal")[0].value === "Toertocht van 120 km", "vorige stap behoudt ingevulde antwoorden");
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Volgende")[0].click();
@@ -148,7 +148,7 @@ ok(text().includes("Jeugdrenner: train met begeleiding"), "jeugdrenner krijgt ee
 ok(find(root.app, e => e.className.includes("day")).length >= 7, "zeven dagkaarten");
 ok(find(root.app, e => e.className.includes("week-visual-day")).length === 7, "week heeft een visueel overzicht van alle zeven dagen");
 ok(!text().includes("Hoeveel van het schema heb je gedaan?"), "oude weekcheck-in met formulier is verwijderd");
-ok(text().includes("Dagmetingen en analyse bekijken") && !text().includes("Kopieer trainingsprompt"), "TrainingPeaks-prompt is niet prominent in het weekschema");
+ok(!text().includes("Dagmetingen") && !text().includes("Kopieer trainingsprompt"), "dagmetingen en TrainingPeaks-prompt staan niet prominent in het weekschema");
 const planData = await (await sandbox.fetch("/api/plan")).json();
 const dayToEdit = planData.plan.intake.dagen[0];
 const dayButton = find(root.app, e => e.className.includes("week-visual-day"))[dayToEdit];
@@ -177,23 +177,19 @@ ok(sandbox.copiedText.includes("Duration: 70 minuten") &&
   sandbox.copiedText.includes("Training: Handmatige duurrit."),
   "TrainingPeaks-prompt gebruikt de nieuwste handmatig opgeslagen training");
 
-find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Analyse")[0].click();
-ok(text().includes("Dagmetingen toevoegen") && text().includes("Body Battery hoog"), "analysepagina biedt herstelmetingen");
-find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "resting_hr")[0].value = "52";
-await submit(find(root.app, e => e.tagName === "FORM")[0]);
-ok(text().includes("Recente dagmetingen") && text().includes("52 bpm"), "dagmeting kan worden opgeslagen en getoond");
-
-vm.runInContext('state.training = { recent_activities: [{ date: "2026-10-25", name: "Zondagrit", sport: "cycling", minutes: 95, distance_km: 42, power: 185, heart_rate: 144, source: "csv" }], weeks: [] }', sandbox);
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Activiteiten")[0].click();
-ok(text().includes("Recente activiteiten") && text().includes("Zondagrit") && text().includes("42.0 km"), "activiteiten-tab toont recente trainingen");
-ok(text().includes("Strava-koppeling") && text().includes("Nog niet beschikbaar"), "Strava staat eerlijk als toekomstige koppeling aangegeven");
-find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Bespreek mijn activiteiten met de coach")[0].click();
-ok(find(root.app, e => e.tagName === "TEXTAREA" && e.attrs.id === "coach-input")[0].value.includes("recente activiteiten"), "activiteitentab opent chat met een reflectievraag klaar");
+ok(text().includes("Nog geen activiteiten gekoppeld") && !text().includes("TrainingPeaks"), "activiteiten-tab toont status zonder importfunctie");
+ok(text().includes("Een koppeling met Strava is nog niet beschikbaar"), "Strava staat eerlijk als toekomstige koppeling aangegeven");
+find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Garmin koppelen")[0].click();
+ok(text().includes("Koppel Garmin") && text().includes("Koppeling nog niet actief") &&
+  find(root.app, e => e.tagName === "BUTTON" && e.attrs.disabled !== undefined && e.textContent === "Garmin binnenkort koppelen").length === 1,
+  "Garmin-pagina toont een duidelijke status zonder een niet-bestaande koppeling te suggereren");
 
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Coach")[0].click();
 await tick();
 ok(!text().includes("Week als context") && !text().includes("Training als context") && !text().includes("Week 1 · Ma"), "chat toont geen week- of dagcontext");
 ok(root.launcher.textContent.includes("Je wielercoach"), "coachknop heeft een herkenbare compacte launcher");
+ok(!text().includes("dagelijkse meetwaarden"), "coach krijgt nog geen automatische metingen zolang Garmin niet is gekoppeld");
 let coachForm = find(root.app, e => e.tagName === "FORM" &&
   find(e, child => child.className === "chat-send").length)[0];
 find(coachForm, e => e.tagName === "TEXTAREA")[0].value = "Ik heb komende zaterdag een MTB-rit met de club. Kan je dat erop zetten?";
