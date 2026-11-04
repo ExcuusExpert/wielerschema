@@ -5,23 +5,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>WielerSchema: trainingsschema op maat met een AI-coach</title>
   <meta name="description" content="Maak een persoonlijk wielertrainingsschema. De AI-coach stelt eerst vragen en stuurt je schema elke week bij op basis van hoe het ging.">
-  <meta name="theme-color" content="#0f1420">
+  <meta name="theme-color" content="#f5f7f5">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="top">
-    <a class="brand" href="/">Wieler<span>Schema</span></a>
-    <nav id="nav" aria-label="Menu"></nav>
-  </header>
-  <main id="app" class="wrap">
-    <p class="muted">Laden…</p>
-    <noscript><p class="error">Deze site heeft JavaScript nodig.</p></noscript>
-  </main>
-  <footer class="foot">
-    <a href="privacy.html">Privacyverklaring</a>
-    <span> · Een schema is geen medisch advies. Heb je pijn, een blessure of klachten? Overleg met een arts of fysiotherapeut.</span>
-  </footer>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/">Wieler<span>Schema</span></a>
+      <nav id="nav" aria-label="Hoofdnavigatie"></nav>
+      <div id="sidebar-account"></div>
+    </aside>
+    <div class="main-shell">
+      <header class="mobile-top"><a class="brand" href="/">Wieler<span>Schema</span></a></header>
+      <main id="app" class="wrap">
+        <p class="muted">Laden…</p>
+        <noscript><p class="error">Deze site heeft JavaScript nodig.</p></noscript>
+      </main>
+      <footer class="foot">
+        <a href="privacy.html">Privacyverklaring</a>
+        <span> · Een schema is geen medisch advies. Heb je pijn, een blessure of klachten? Overleg met een arts of fysiotherapeut.</span>
+      </footer>
+    </div>
+  </div>
+  <div id="coach-launcher"></div>
   <script src="app.js" defer></script>
 </body>
 </html>

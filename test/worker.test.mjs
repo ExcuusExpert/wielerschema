@@ -56,8 +56,8 @@ globalThis.fetch = async (url, init) => {
     });
   } else if (prompt.includes("Maak nu week")) content = JSON.stringify({ uitleg: "Iets rustiger.", week: weekJson({ minutes: 200 }) });
   else if (prompt.includes("Nieuw bericht van de gebruiker")) content = JSON.stringify({
-    antwoord: "Ik maak de training rustiger en houd dezelfde trainingsdag aan.",
-    aanpassing: { type: "duurrit", minuten: 55, zone: "Z2", titel: "Rustige duur", beschrijving: "55 minuten op Z2, RPE 3-4." }
+    antwoord: "Ik stel een rustigere training voor. Pas ik die voor je toe?",
+    voorstel: { type: "duurrit", minuten: 55, zone: "Z2", titel: "Rustige duur", beschrijving: "55 minuten op Z2, RPE 3-4." }
   });
   else content = "{}";
   return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 });
@@ -185,7 +185,7 @@ test("vragen van de coach", async () => {
   assert.equal(r.data.vragen[0].id, "v1");
 });
 
-test("coachchat kan uitleggen, een gekozen training aanpassen en het gesprek bewaren", async () => {
+test("coachchat bewaart een voorstel zonder toe te passen totdat de gebruiker bevestigt", async () => {
   const env = makeEnv();
   const cookie = await signup(env);
   const created = await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
@@ -196,14 +196,23 @@ test("coachchat kan uitleggen, een gekozen training aanpassen en het gesprek bew
     week_no: 1, day_no: 3, bericht: "Maak deze training rustiger."
   }, { cookie });
   assert.equal(r.status, 200, JSON.stringify(r.data));
-  assert.equal(r.data.aangepast, true);
-  assert.equal(r.data.week.dagen.find(day => day.dag === 3).minuten, 55);
-  assert.deepEqual(r.data.week.dagen.find(day => day.dag === 1), originalOtherDay);
-  const thread = await api(env, "GET", "/api/coach/chat?week_no=1&day_no=3", undefined, { cookie });
+  assert.equal(r.data.aangepast, false);
+  assert.equal(r.data.voorstel.status, "pending");
+  assert.equal(r.data.voorstel.workout.minuten, 55);
+  const unchanged = await api(env, "GET", "/api/plan", undefined, { cookie });
+  assert.equal(unchanged.data.weeks[0].dagen.find(day => day.dag === 3).minuten, originalWeek.dagen.find(day => day.dag === 3).minuten);
+  assert.deepEqual(unchanged.data.weeks[0].dagen.find(day => day.dag === 1), originalOtherDay);
+  const thread = await api(env, "GET", "/api/coach/chat?global=1", undefined, { cookie });
   assert.equal(thread.data.messages.length, 2);
   assert.equal(thread.data.messages[0].role, "user");
   assert.equal(thread.data.messages[1].role, "assistant");
-  assert.equal(thread.data.messages[1].updated, true);
+  assert.equal(thread.data.messages[1].suggestion.status, "pending");
+  const applied = await api(env, "POST", "/api/coach/suggestions", { id: r.data.voorstel.id, action: "apply" }, { cookie });
+  assert.equal(applied.status, 200, JSON.stringify(applied.data));
+  assert.equal(applied.data.status, "applied");
+  assert.equal(applied.data.week.dagen.find(day => day.dag === 3).minuten, 55);
+  assert.deepEqual(applied.data.week.dagen.find(day => day.dag === 1), originalOtherDay);
+  assert.equal((await api(env, "POST", "/api/coach/suggestions", { id: r.data.voorstel.id, action: "apply" }, { cookie })).status, 409);
   const badDay = await api(env, "POST", "/api/coach/chat", {
     week_no: 1, day_no: 2, bericht: "Pas dinsdag aan."
   }, { cookie });
@@ -222,6 +231,7 @@ test("doorlopende coachchat toont gesprekken samen en neemt eerdere berichten me
     week_no: 1, day_no: 3, bericht: "Maak deze training rustiger.", global: true
   }, { cookie });
   assert.equal(current.status, 200, JSON.stringify(current.data));
+  assert.equal(current.data.aangepast, false);
   assert.ok(lastGroqPrompt.includes("Hoe zwaar is mijn training?"));
 
   const conversation = await api(env, "GET", "/api/coach/chat?global=1", undefined, { cookie });
@@ -230,6 +240,43 @@ test("doorlopende coachchat toont gesprekken samen en neemt eerdere berichten me
   assert.equal(conversation.data.messages[0].day_no, 1);
   assert.equal(conversation.data.messages[2].day_no, 3);
   assert.equal(conversation.data.messages[3].role, "assistant");
+});
+
+test("dagmetingen valideren invoer, bewaren tot een jaar en komen als context in de coachchat", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env);
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const saved = await api(env, "POST", "/api/wellness", {
+    date: yesterday,
+    metrics: { resting_hr: 52, sleep_hours: 7.5, deep_sleep_hours: 1.2, body_battery_low: 18, body_battery_high: 76, stress_avg: 31, hrv_ms: 54, note: "Voelde me uitgerust." }
+  }, { cookie });
+  assert.equal(saved.status, 200, JSON.stringify(saved.data));
+  assert.equal(saved.data.entries[0].resting_hr, 52);
+  assert.equal(saved.data.entries[0].note, "Voelde me uitgerust.");
+  assert.equal((await api(env, "GET", "/api/wellness", undefined, { cookie })).data.entries.length, 1);
+  assert.equal((await api(env, "POST", "/api/wellness", {
+    date: today, metrics: { body_battery_low: 80, body_battery_high: 20 }
+  }, { cookie })).status, 400);
+  assert.equal((await api(env, "POST", "/api/wellness", {
+    date: today, metrics: { resting_hr: 251 }
+  }, { cookie })).status, 400);
+  assert.equal((await api(env, "POST", "/api/wellness", {
+    date: future(1), metrics: { resting_hr: 52 }
+  }, { cookie })).status, 400);
+  const tooOld = new Date(Date.now() - 366 * 86400000).toISOString().slice(0, 10);
+  assert.equal((await api(env, "POST", "/api/wellness", {
+    date: tooOld, metrics: { resting_hr: 52 }
+  }, { cookie })).status, 400);
+
+  await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  const coach = await api(env, "POST", "/api/coach/chat", {
+    week_no: 1, day_no: 3, bericht: "Hoe herstel ik?"
+  }, { cookie });
+  assert.equal(coach.status, 200);
+  assert.ok(lastGroqPrompt.includes("52"));
+  assert.ok(lastGroqPrompt.includes("Voelde me uitgerust."));
+  assert.match(lastGroqPrompt, /stel geen medische diagnose/);
 });
 
 test("TrainingPeaks-import verwerkt ZIP/CSV, beperkt tot een jaar en bewaart alleen samenvattingen", async () => {
@@ -392,14 +439,19 @@ test("export bevat geen wachtwoordgegevens; account verwijderen wist alles", asy
   const env = makeEnv();
   const cookie = await signup(env, "wissen");
   await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  const today = new Date().toISOString().slice(0, 10);
+  await api(env, "POST", "/api/wellness", { date: today, metrics: { resting_hr: 52 } }, { cookie });
+  await api(env, "POST", "/api/coach/chat", { week_no: 1, day_no: 3, bericht: "Maak deze training rustiger." }, { cookie });
   const exp = await api(env, "GET", "/api/account/export", undefined, { cookie });
   assert.equal(exp.status, 200);
   assert.ok(!JSON.stringify(exp.data).match(/salt|hash/));
   assert.equal(exp.data.gebruikersnaam, "wissen");
+  assert.equal(exp.data.dagelijkse_metrics[0].resting_hr, 52);
+  assert.equal(exp.data.coachgesprekken.length, 2);
 
   assert.equal((await api(env, "POST", "/api/account/delete", { password: "verkeerd-wachtwoord" }, { cookie })).status, 401);
   assert.equal((await api(env, "POST", "/api/account/delete", { password: GOOD_PW }, { cookie })).status, 200);
-  for (const table of ["users", "sessions", "plans", "weeks", "training_history"]) {
+  for (const table of ["users", "sessions", "plans", "weeks", "training_history", "daily_metrics", "coach_suggestions", "coach_messages"]) {
     assert.equal(env.DB.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0, table);
   }
   assert.equal((await api(env, "GET", "/api/me", undefined, { cookie })).status, 401);

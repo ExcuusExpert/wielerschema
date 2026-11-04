@@ -24,8 +24,8 @@ globalThis.fetch = async (url, init) => {
     content = JSON.stringify({ samenvatting: "Rustige opbouw naar je doel.", weken: Array.from({ length: n }, (_, i) => ({ week: i + 1, fase: "opbouw", focus: "Basis", uren: 6 })), week1: week(90) });
   } else if (prompt.includes("Maak nu week")) content = JSON.stringify({ uitleg: "Iets rustiger.", week: week(80) });
   else if (prompt.includes("Nieuw bericht van de gebruiker")) content = JSON.stringify({
-    antwoord: "Ik heb deze training aangepast naar een rustige duurtraining.",
-    aanpassing: { type: "duurrit", minuten: 55, zone: "Z2", titel: "Rustige duur", beschrijving: "55 minuten op Z2, RPE 3-4." }
+    antwoord: "Ik stel een rustige duurtraining voor. Pas ik die voor je toe?",
+    voorstel: { type: "duurrit", minuten: 55, zone: "Z2", titel: "Rustige duur", beschrijving: "55 minuten op Z2, RPE 3-4." }
   });
   return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 });
 };
@@ -37,6 +37,7 @@ class El {
     this.classList = { add: (c) => { this.className += " " + c; } }; }
   get firstChild() { return this.children[0] || null; }
   appendChild(c) { this.children.push(c); c.parent = this; return c; }
+  append(...items) { items.forEach(item => this.appendChild(typeof item === "string" ? new TextNode(item) : item)); }
   removeChild(c) { this.children = this.children.filter(x => x !== c); return c; }
   remove() { if (this.parent) this.parent.removeChild(this); }
   setAttribute(k, v) { this.attrs[k] = v; if (k === "value") this._value = String(v); if (k === "checked") this.checked = true; }
@@ -55,12 +56,12 @@ class El {
 const walk = (el, fn) => { fn(el); (el.children || []).forEach(c => c.children && walk(c, fn)); };
 const find = (root, pred) => { const out = []; walk(root, (e) => { if (pred(e)) out.push(e); }); return out; };
 
-const root = { app: new El("main"), nav: new El("nav") };
+const root = { app: new El("main"), nav: new El("nav"), account: new El("div"), launcher: new El("div") };
 const jar = {};
 const env = { DB: new FakeD1(), GROQ_API_KEY: "test" };
 const sandbox = {
   console, Date, Math, JSON, Number, String, Array, Promise, Object, Error, setTimeout, URL: { createObjectURL: () => "blob:x" }, Blob: class {},
-  document: { getElementById: (id) => (id === "app" ? root.app : root.nav), createElement: (t) => new El(t), createTextNode: (t) => new TextNode(t), body: new El("body") },
+  document: { getElementById: (id) => ({ app: root.app, nav: root.nav, "sidebar-account": root.account, "coach-launcher": root.launcher })[id], createElement: (t) => new El(t), createTextNode: (t) => new TextNode(t), body: new El("body") },
   window: { scrollTo() {} }, navigator: { clipboard: { writeText: async (value) => { sandbox.copiedText = value; } } }, confirm: () => true,
   copiedText: "",
   fetch: async (path, init = {}) => {
@@ -92,7 +93,7 @@ inputs.find(i => i.attrs.name === "password").value = "een-lang-wachtwoord";
 inputs.find(i => i.attrs.name === "consent").checked = true;
 await submit(find(root.app, e => e.tagName === "FORM")[0]);
 ok(text().includes("Jouw doel en situatie"), "na registreren: intakeformulier");
-ok(text().includes("Welke meetapparatuur gebruik je?") && text().includes("TrainingPeaks-gegevens"), "meterkeuze en TrainingPeaks-import zichtbaar");
+ok(text().includes("Welke meetapparatuur gebruik je?") && text().includes("TrainingPeaks-gegevens importeren"), "meterkeuze en route naar TrainingPeaks-import zichtbaar");
 const meter = find(root.app, e => e.tagName === "SELECT")[1];
 for (const option of meter.children) delete option.attrs.selected;
 meter.children.find(option => option.attrs.value === "heart_rate").attrs.selected = "";
@@ -110,18 +111,37 @@ await submit(find(root.app, e => e.tagName === "FORM")[0]);
 ok(text().includes("Toertocht van 120 km") && text().includes("Week 1") && text().includes("Rustige opbouw"), "schema getoond met week 1");
 ok(find(root.app, e => e.className.includes("day")).length >= 7, "zeven dagkaarten");
 ok(text().includes("Hoe ging week 1?"), "check-in formulier onder de laatste week");
-ok(text().includes("Praat met je coach") && text().includes("Kopieer prompt voor TrainingPeaks AI"), "doorlopende coachchat en TrainingPeaks-workoutprompt zichtbaar");
+ok(text().includes("Dagmetingen en analyse bekijken") && text().includes("Kopieer prompt voor TrainingPeaks AI"), "herstelmetingen en TrainingPeaks-workoutprompt zichtbaar");
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer prompt voor TrainingPeaks AI")[0].click();
 await tick();
 ok(sandbox.copiedText.includes("Build Intervals By: Duration") && sandbox.copiedText.includes("Intensity: Heart Rate") && sandbox.copiedText.includes("hartslagzones"), "TrainingPeaks-prompt gebruikt hartslagzones en workoutduur");
+
+find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Analyse")[0].click();
+ok(text().includes("Dagmetingen toevoegen") && text().includes("Body Battery hoog"), "analysepagina biedt herstelmetingen");
+find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "resting_hr")[0].value = "52";
+await submit(find(root.app, e => e.tagName === "FORM")[0]);
+ok(text().includes("Recente dagmetingen") && text().includes("52 bpm"), "dagmeting kan worden opgeslagen en getoond");
+
+find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Coach")[0].click();
+await tick();
 const coachForm = find(root.app, e => e.tagName === "FORM" &&
   find(e, child => child.tagName === "BUTTON" && child.textContent === "Stuur naar de coach").length)[0];
 find(coachForm, e => e.tagName === "TEXTAREA")[0].value = "Maak deze training rustiger.";
+const before = await (await sandbox.fetch("/api/plan")).json();
+const beforeMinutes = before.weeks[0].dagen.find(day => day.dag === 1).minuten;
 const chatSending = submit(coachForm);
 await tick();
 ok(text().includes("De coach is je bericht aan het verwerken"), "coachchat toont een zichtbare laadstatus tijdens antwoord");
 await chatSending;
-ok(text().includes("Ik heb deze training aangepast") && text().includes("Training bijgewerkt"), "coachchat bewaart antwoord en past gekozen workout aan");
+ok(text().includes("Ik stel een rustige duurtraining voor") && text().includes("Pas training aan"), "coachchat toont een voorstel dat wacht op bevestiging");
+const stillUnchanged = await (await sandbox.fetch("/api/plan")).json();
+ok(stillUnchanged.weeks[0].dagen.find(day => day.dag === 1).minuten === beforeMinutes, "training blijft ongewijzigd totdat de gebruiker bevestigt");
+find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Pas training aan")[0].click();
+await tick();
+await tick();
+const afterApply = await (await sandbox.fetch("/api/plan")).json();
+ok(afterApply.weeks[0].dagen.find(day => day.dag === 1).minuten === 55, "training verandert pas na bevestiging");
+find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Plan")[0].click();
 
 const checkin = find(root.app, e => e.tagName === "FORM" && e.children.some(c => c.tagName === "BUTTON" && c.textContent === "Maak week 2"))[0];
 await submit(checkin);

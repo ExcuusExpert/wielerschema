@@ -11,8 +11,10 @@ const FASE_LABEL = { basis: "Basis", opbouw: "Opbouw", piek: "Piek", afbouw: "Af
 
 const app = document.getElementById("app");
 const nav = document.getElementById("nav");
+const sidebarAccount = document.getElementById("sidebar-account");
+const coachLauncher = document.getElementById("coach-launcher");
 
-const state = { user: null, data: null, week: 1, training: null };
+const state = { user: null, data: null, week: 1, training: null, wellness: [], page: "plan" };
 
 // ---------- hulpfuncties ----------
 function h(tag, props, ...children) {
@@ -84,22 +86,47 @@ function busyButton(button, message, statusEl) {
 }
 
 // ---------- menu ----------
-function renderNav() {
+function renderNav(activePage = state.page) {
   clear(nav);
+  clear(sidebarAccount);
+  clear(coachLauncher);
   if (!state.user) return;
-  nav.appendChild(h("button", { class: "link", type: "button", text: "Mijn schema", onclick: () => (state.data?.plan ? viewPlan() : viewIntake()) }));
-  if (state.data?.plan) nav.appendChild(h("button", {
-    class: "link", type: "button", text: "Coach chat",
-    onclick: () => {
-      if (!document.getElementById("coach-chat")) viewPlan();
-      document.getElementById("coach-chat")?.scrollIntoView({ behavior: "smooth", block: "start" });
-      document.getElementById("coach-input")?.focus({ preventScroll: true });
-    }
-  }));
-  nav.appendChild(h("button", { class: "link", type: "button", text: "Account", onclick: viewAccount }));
-  nav.appendChild(h("button", {
-    class: "link", type: "button", text: "Uitloggen",
-    onclick: async () => { try { await api("POST", "/api/logout", {}); } catch { /* al uitgelogd */ } state.user = null; state.data = null; start(); }
+  const pages = [
+    ["plan", "Plan", () => state.data?.plan ? viewPlan() : viewIntake()],
+    ["coach", "Coach", viewCoach],
+    ["analytics", "Analyse", viewAnalytics],
+    ["import", "TrainingPeaks-import", viewImport],
+    ["account", "Account", viewAccount]
+  ];
+  for (const [page, label, action] of pages) {
+    nav.appendChild(h("button", {
+      class: `nav-item${activePage === page ? " active" : ""}`,
+      type: "button",
+      "aria-current": activePage === page ? "page" : null,
+      text: label,
+      onclick: action
+    }));
+  }
+  sidebarAccount.append(
+    h("span", { class: "sidebar-username", text: state.user }),
+    h("button", {
+      class: "nav-logout", type: "button", text: "Uitloggen",
+      onclick: async () => {
+        await api("POST", "/api/logout", {}).catch(() => {});
+        state.user = null;
+        state.data = null;
+        state.wellness = [];
+        state.training = null;
+        viewAuth("login");
+      }
+    })
+  );
+  if (state.data?.plan) coachLauncher.appendChild(h("button", {
+    class: "coach-launcher-button",
+    type: "button",
+    text: "Chat met je coach",
+    "aria-label": "Open de coachchat",
+    onclick: viewCoach
   }));
 }
 
@@ -153,7 +180,8 @@ function viewAuth(mode = "login") {
 
 // ---------- intake ----------
 function viewIntake(prefill) {
-  renderNav();
+  state.page = "plan";
+  renderNav("plan");
   const p = prefill || {};
   const error = h("p", { class: "error", role: "alert" });
   const status = h("p", { class: "muted", role: "status" });
@@ -178,38 +206,6 @@ function viewIntake(prefill) {
   const jaren = h("input", { type: "number", min: 0, max: 60, placeholder: "Optioneel", value: p.ervaring_jaren ?? "" });
   const beperkingen = h("textarea", { rows: 2, maxlength: 300, placeholder: "Optioneel, bijvoorbeeld een oude blessure. Vul alleen in wat je kwijt wilt." }, p.beperkingen || "");
   const opmerkingen = h("textarea", { rows: 2, maxlength: 400, placeholder: "Optioneel, bijvoorbeeld: ik werk onregelmatig of train vooral buiten." }, p.opmerkingen || "");
-  const workouts = h("input", { type: "file", accept: ".zip,application/zip" });
-  const summary = h("input", { type: "file", accept: ".zip,application/zip" });
-  const metrics = h("input", { type: "file", accept: ".zip,application/zip" });
-  const trainingConsent = h("input", { type: "checkbox" });
-  const uploadStatus = h("p", { class: "muted", role: "status" });
-  const uploadButton = h("button", {
-    class: "btn ghost", type: "button", text: "TrainingPeaks-exports importeren",
-    onclick: async () => {
-      uploadStatus.textContent = "";
-      const selected = [["workouts", workouts], ["summary", summary], ["metrics", metrics]]
-        .filter(([, input]) => input.files && input.files.length)
-        .map(([name, input]) => [name, input.files[0]]);
-      if (!selected.length) { uploadStatus.textContent = "Kies eerst minstens één ZIP-exportbestand."; return; }
-      if (!trainingConsent.checked) { uploadStatus.textContent = "Geef eerst toestemming om deze trainingsgegevens met Groq te verwerken."; return; }
-      const formData = new FormData();
-      for (const [name, file] of selected) formData.append(name, file);
-      formData.append("ai_consent", "yes");
-      uploadButton.disabled = true;
-      uploadStatus.textContent = "De exports worden verwerkt…";
-      try {
-        const response = await fetch("/api/trainingpeaks/import", { method: "POST", credentials: "same-origin", body: formData });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(result.message || "De exports konden niet worden geïmporteerd.");
-        state.training = result.summary;
-        viewIntake(collect());
-      } catch (e) {
-        uploadStatus.textContent = e.message;
-      } finally {
-        uploadButton.disabled = false;
-      }
-    }
-  });
   const submit = h("button", { class: "btn", type: "submit", text: "Volgende: vragen van de coach" });
 
   function collect() {
@@ -247,24 +243,73 @@ function viewIntake(prefill) {
   h("div", { class: "grid2" }, field("FTP in watt", ftp, "Alleen invullen als je een vermogensmeter gebruikt."), field("Jaren ervaring", jaren)),
   field("Beperkingen of klachten", beperkingen),
   field("Overige opmerkingen", opmerkingen),
-  h("section", { class: "training-import stack" },
-    h("h3", { text: "TrainingPeaks-gegevens (optioneel)" }),
-    h("p", { class: "muted", text: "Upload de ZIP-exporten van Workout Files, Workout Summary en/of Custom Metrics. Je kunt exports tegelijk of apart importeren. Kies in TrainingPeaks maximaal één jaar aan gegevens; alleen gegevens van maximaal 365 dagen oud worden verwerkt. De totale upload mag maximaal 20 MB zijn. Ruwe bestanden worden weggegooid; weektotalen worden samengevoegd, bewaard en door de coach gebruikt." }),
-    state.training ? h("p", { class: "import-summary", text: `Geïmporteerd: ${state.training.activities} ritten in ${state.training.weeks.length} weken. Periode: ${state.training.period_start} t/m ${state.training.period_end}.` }) : null,
-    field("Workout Files — ZIP met FIT-bestanden", workouts),
-    field("Workout Summary — ZIP met CSV", summary),
-    field("Custom Metrics — ZIP met CSV", metrics),
-    h("label", { class: "check" }, trainingConsent, h("span", { text: "Ik geef toestemming om de geïmporteerde trainingsgegevens, inclusief eventuele gezondheidswaarden, met Groq te verwerken voor mijn schema." })),
-    uploadStatus, uploadButton
-  ),
+  h("p", { class: "tip", text: "Wil je je eerdere ritten gebruiken? Je kunt TrainingPeaks-gegevens importeren via de zijbalk." }),
   error, status, submit
   );
 
   show(h("h1", { text: "Nieuw schema" }), form);
 }
 
+function viewImport() {
+  state.page = "import";
+  renderNav("import");
+  const workouts = h("input", { type: "file", accept: ".zip,application/zip" });
+  const summary = h("input", { type: "file", accept: ".zip,application/zip" });
+  const metrics = h("input", { type: "file", accept: ".zip,application/zip" });
+  const consent = h("input", { type: "checkbox" });
+  const status = h("p", { class: "muted", role: "status" });
+  const submit = h("button", {
+    class: "btn", type: "button", text: "Bestanden importeren",
+    onclick: async () => {
+      status.textContent = "";
+      const selected = [["workouts", workouts], ["summary", summary], ["metrics", metrics]]
+        .filter(([, input]) => input.files && input.files.length)
+        .map(([name, input]) => [name, input.files[0]]);
+      if (!selected.length) { status.textContent = "Kies eerst minstens één ZIP-exportbestand."; return; }
+      if (!consent.checked) { status.textContent = "Geef eerst toestemming om deze trainingsgegevens met Groq te verwerken."; return; }
+      const formData = new FormData();
+      for (const [name, file] of selected) formData.append(name, file);
+      formData.append("ai_consent", "yes");
+      submit.disabled = true;
+      status.textContent = "De exports worden verwerkt…";
+      try {
+        const response = await fetch("/api/trainingpeaks/import", { method: "POST", credentials: "same-origin", body: formData });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.message || "De exports konden niet worden geïmporteerd.");
+        state.training = result.summary;
+        state.page = "import";
+        viewImport();
+      } catch (error) {
+        status.textContent = error.message;
+      } finally {
+        submit.disabled = false;
+      }
+    }
+  });
+  show(
+    h("div", { class: "page-heading" },
+      h("p", { class: "eyebrow", text: "GEGEVENS" }),
+      h("h1", { text: "TrainingPeaks importeren" }),
+      h("p", { class: "muted", text: "Voeg maximaal één jaar aan workout- en Custom Metrics-exports toe. Dit is een bestandsimport, geen live koppeling." })),
+    state.training ? h("section", { class: "card import-summary-card stack" },
+      h("h2", { text: "Import beschikbaar voor je coach" }),
+      h("p", { text: `${state.training.activities} ritten in ${state.training.weeks.length} weken.` }),
+      h("p", { class: "muted", text: `Periode: ${state.training.period_start} t/m ${state.training.period_end}.` })) : null,
+    h("section", { class: "card stack" },
+      h("h2", { text: "Kies je ZIP-exporten" }),
+      h("p", { class: "muted", text: "Ruwe bestanden worden alleen in het geheugen verwerkt. We bewaren weektotalen en gemiddelden zodat je coach ze kan gebruiken." }),
+      field("Workout Files — ZIP met FIT-bestanden", workouts),
+      field("Workout Summary — ZIP met CSV", summary),
+      field("Custom Metrics — ZIP met CSV", metrics),
+      h("p", { class: "hint", text: "Upload maximaal 20 MB tegelijk. Gegevens ouder dan 365 dagen worden genegeerd." }),
+      h("label", { class: "check" }, consent, h("span", { text: "Ik geef toestemming om de geïmporteerde trainingsgegevens, inclusief eventuele gezondheidswaarden, met Groq te verwerken." })),
+      status, submit)
+  );
+}
+
 function viewQuestions(intake, vragen) {
-  renderNav();
+  state.page = "plan";
+  renderNav("plan");
   const error = h("p", { class: "error", role: "alert" });
   const status = h("p", { class: "muted", role: "status" });
   const messages = [];
@@ -455,7 +500,16 @@ function coachChat(plan, weeks, currentWeek) {
           h("span", { class: "chat-label", text: item.role === "assistant" ? "WielerSchema-coach" : "Jij" }),
           item.week_no ? h("span", { class: "chat-context", text: `Week ${item.week_no} · ${DAGEN_KORT[item.day_no] || ""}` }) : null),
         h("p", { class: "chat-bubble", text: item.content }),
-        item.updated ? h("span", { class: "hint", text: "Training bijgewerkt" }) : null));
+        item.updated ? h("span", { class: "hint", text: "Training bijgewerkt" }) : null,
+        item.suggestion ? h("section", { class: "suggestion-card" },
+          h("strong", { text: `${TYPE_LABEL[item.suggestion.workout.type] || "Training"} · ${minutesText(item.suggestion.workout.minuten)}` }),
+          h("p", { text: item.suggestion.workout.titel }),
+          h("p", { class: "muted", text: item.suggestion.workout.beschrijving }),
+          item.suggestion.status === "pending"
+            ? h("div", { class: "row" },
+              h("button", { class: "btn small", type: "button", text: "Pas training aan", onclick: () => resolveSuggestion(item.suggestion.id, "apply") }),
+              h("button", { class: "btn ghost small", type: "button", text: "Niet toepassen", onclick: () => resolveSuggestion(item.suggestion.id, "dismiss") }))
+            : h("p", { class: "hint", text: item.suggestion.status === "applied" ? "Training aangepast" : "Voorstel niet toegepast" })) : null));
     }
     if (thinking) messages.appendChild(h("div", { class: "chat-message coach", role: "status" },
       h("span", { class: "chat-label", text: "WielerSchema-coach" }),
@@ -463,6 +517,19 @@ function coachChat(plan, weeks, currentWeek) {
         h("span", { class: "typing-dots", "aria-hidden": "true" }, h("i"), h("i"), h("i")),
         h("span", { class: "sr-only", text: "De coach is je bericht aan het verwerken" }))));
     messages.scrollTop = messages.scrollHeight;
+  };
+  const resolveSuggestion = async (id, action) => {
+    error.textContent = "";
+    status.textContent = action === "apply" ? "Training wordt aangepast…" : "Voorstel wordt gesloten…";
+    try {
+      await api("POST", "/api/coach/suggestions", { id, action });
+      state.data = await api("GET", "/api/plan");
+      state.wellness = (await api("GET", "/api/wellness")).entries;
+      viewCoach();
+    } catch (e) {
+      error.textContent = e.message;
+      status.textContent = "";
+    }
   };
   const loadThread = async () => {
     const requestId = ++loadId;
@@ -503,8 +570,9 @@ function coachChat(plan, weeks, currentWeek) {
         if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
         input.value = "";
         state.data = await api("GET", "/api/plan");
+        state.wellness = (await api("GET", "/api/wellness")).entries;
         state.week = Number(contextWeek.value);
-        viewPlan();
+        viewCoach();
       } catch (e) {
         error.textContent = e.message;
         submit.disabled = false;
@@ -537,8 +605,23 @@ function coachChat(plan, weeks, currentWeek) {
     form);
 }
 
+function viewCoach() {
+  state.page = "coach";
+  renderNav("coach");
+  if (!state.data?.plan) return viewIntake();
+  const week = state.data.weeks.find(item => item.week_no === state.week) || state.data.weeks[state.data.weeks.length - 1];
+  show(
+    h("div", { class: "page-heading" },
+      h("p", { class: "eyebrow", text: "PERSOONLIJKE BEGELEIDING" }),
+      h("h1", { text: "Coach" }),
+      h("p", { class: "muted", text: "Eén doorlopend gesprek. De coach ziet je schema en je meest recente dagelijkse meetwaarden." })),
+    coachChat(state.data.plan, state.data.weeks, week)
+  );
+}
+
 function viewPlan() {
-  renderNav();
+  state.page = "plan";
+  renderNav("plan");
   if (!state.data || !state.data.plan) return viewIntake();
   const { plan, weeks } = state.data;
   const week = weeks.find(w => w.week_no === state.week) || weeks[weeks.length - 1];
@@ -573,7 +656,6 @@ function viewPlan() {
       h("p", { text: plan.summary }),
       h("p", { class: "muted", text: `${plan.total_weeks} weken, start ${dateLabel(plan.start_date)}. Je ziet steeds één week in detail; de volgende week maakt de coach nadat je hebt teruggemeld hoe het ging.` }),
       outline),
-    coachChat(plan, weeks, week),
     week.waarschuwing ? h("p", { class: "warn", role: "alert", text: week.waarschuwing }) : null,
     h("section", { class: "stack" },
       h("div", { class: "row between" },
@@ -585,6 +667,10 @@ function viewPlan() {
       h("p", { class: "muted", text: "De prompt wordt naar je klembord gekopieerd; plak hem daarna in TrainingPeaks AI. De hartslagdoelen gebruiken je daar ingestelde zones; er worden geen bpm-waarden verzonnen." }),
       week.tips ? h("p", { class: "tip", text: "Tip: " + week.tips }) : null),
     isLast && !finished ? checkinForm(plan, week) : null,
+    h("section", { class: "card stack daily-metrics-promo" },
+      h("h2", { text: "Hoe herstel je?" }),
+      h("p", { class: "muted", text: "Vul je slaap, rusthartslag of Garmin Body Battery in. Je coach kan die gegevens meenemen in het gesprek." }),
+      h("button", { class: "btn ghost", type: "button", text: "Dagmetingen en analyse bekijken", onclick: viewAnalytics })),
     finished ? h("p", { class: "card", text: "Dit was de laatste week van je schema. Veel succes met je doel!" }) : null,
     h("p", { class: "muted" },
       h("button", { class: "link", type: "button", text: "Nieuw schema beginnen",
@@ -597,9 +683,146 @@ function viewPlan() {
   );
 }
 
+const WELLNESS_LABELS = {
+  resting_hr: "Rusthartslag",
+  sleep_hours: "Slaap",
+  deep_sleep_hours: "Diepe slaap",
+  light_sleep_hours: "Lichte slaap",
+  rem_sleep_hours: "REM-slaap",
+  awake_hours: "Wakker",
+  body_battery_low: "Body Battery laag",
+  body_battery_high: "Body Battery hoog",
+  stress_avg: "Gemiddelde stress",
+  hrv_ms: "HRV"
+};
+const WELLNESS_UNITS = {
+  resting_hr: "bpm", sleep_hours: "u", deep_sleep_hours: "u", light_sleep_hours: "u",
+  rem_sleep_hours: "u", awake_hours: "u", body_battery_low: "/100", body_battery_high: "/100",
+  stress_avg: "/100", hrv_ms: "ms"
+};
+
+function viewAnalytics() {
+  state.page = "analytics";
+  renderNav("analytics");
+  const entries = state.wellness || [];
+  const todayEntry = entries.find(entry => entry.date === todayIso());
+  const todayMetrics = todayEntry || {};
+  const metricInputs = {};
+  const metricField = (key, min, max, step = 1) => {
+    const input = h("input", {
+      type: "number", min, max, step, name: key, placeholder: "Optioneel",
+      value: todayMetrics[key] ?? ""
+    });
+    metricInputs[key] = input;
+    return field(`${WELLNESS_LABELS[key]} (${WELLNESS_UNITS[key]})`, input);
+  };
+  const date = h("input", { type: "date", max: todayIso(), min: addDays(todayIso(), -365), value: todayIso(), required: true });
+  const note = h("textarea", { rows: 2, maxlength: 300, placeholder: "Optioneel" }, todayMetrics.note || "");
+  const saveStatus = h("p", { class: "muted", role: "status" });
+  const save = h("button", { class: "btn", type: "submit", text: todayEntry ? "Metingen bijwerken" : "Dagmetingen opslaan" });
+  date.addEventListener("change", () => {
+    const entry = entries.find(item => item.date === date.value);
+    for (const [key, input] of Object.entries(metricInputs)) input.value = entry?.[key] ?? "";
+    note.value = entry?.note || "";
+    save.textContent = entry ? "Metingen bijwerken" : "Dagmetingen opslaan";
+  });
+  const form = h("form", {
+    class: "card stack",
+    onsubmit: async event => {
+      event.preventDefault();
+      save.disabled = true;
+      saveStatus.textContent = "Dagmetingen opslaan…";
+      const metrics = Object.fromEntries(Object.entries(metricInputs)
+        .filter(([, input]) => input.value !== "")
+        .map(([key, input]) => [key, Number(input.value)]));
+      metrics.note = note.value;
+      try {
+        state.wellness = (await api("POST", "/api/wellness", { date: date.value, metrics })).entries;
+        viewAnalytics();
+      } catch (error) {
+        saveStatus.textContent = error.message;
+        save.disabled = false;
+      }
+    }
+  },
+  h("h2", { text: "Dagmetingen toevoegen" }),
+  h("p", { class: "muted", text: "Vul waarden van je horloge over, bijvoorbeeld Garmin Health. Lege velden worden niet opgeslagen. Dit is handmatige invoer, geen Garmin-koppeling." }),
+  field("Datum", date),
+  h("div", { class: "metrics-form-grid" },
+    metricField("resting_hr", 25, 250),
+    metricField("sleep_hours", 0, 24, 0.01),
+    metricField("deep_sleep_hours", 0, 24, 0.01),
+    metricField("light_sleep_hours", 0, 24, 0.01),
+    metricField("rem_sleep_hours", 0, 24, 0.01),
+    metricField("awake_hours", 0, 24, 0.01),
+    metricField("body_battery_low", 0, 100),
+    metricField("body_battery_high", 0, 100),
+    metricField("stress_avg", 0, 100),
+    metricField("hrv_ms", 0, 500, 0.1)),
+  field("Notitie", note),
+  h("p", { class: "hint", text: "Herstelwaarden zijn persoonlijke signalen. Ze stellen geen diagnose; bespreek zorgen met een zorgprofessional." }),
+  saveStatus, save);
+
+  const weeks = (state.training?.weeks || []).slice(-12);
+  const recent = weeks.slice(-4);
+  const sum = key => recent.reduce((total, item) => total + (Number(item[key]) || 0), 0);
+  const weightedAverage = key => {
+    const values = recent.filter(item => Number.isFinite(item[key]) && item.hours > 0);
+    const hours = values.reduce((total, item) => total + item.hours, 0);
+    return hours ? Math.round(values.reduce((total, item) => total + item[key] * item.hours, 0) / hours) : null;
+  };
+  const maxHours = Math.max(1, ...weeks.map(item => Number(item.hours) || 0));
+  const bars = weeks.length ? h("div", { class: "volume-chart", role: "img", "aria-label": "Trainingsuren per week" },
+    ...weeks.map(item => h("div", { class: "volume-column", title: `${dateLabel(item.week_start)}: ${item.hours} uur` },
+      h("span", { class: "volume-value", text: `${item.hours}u` }),
+      h("div", { class: "volume-track" },
+        h("div", { class: "volume-bar", style: `height:${Math.max(3, Math.round((Number(item.hours) || 0) / maxHours * 100))}%` })),
+      h("span", { class: "volume-date", text: dateLabel(item.week_start).slice(0, 6) })))) : null;
+  const customNames = [...new Set((state.training?.weeks || []).flatMap(item => Object.keys(item.metrics || {})))];
+  const customRows = customNames.map(name => {
+    const latest = [...(state.training?.weeks || [])].reverse().find(item => item.metrics && item.metrics[name] !== undefined);
+    return latest ? h("div", { class: "metric-row" },
+      h("span", { text: name }), h("strong", { text: `${latest.metrics[name]} · week ${dateLabel(latest.week_start)}` })) : null;
+  });
+  show(
+    h("div", { class: "page-heading" },
+      h("p", { class: "eyebrow", text: "JOUW TRENDS" }),
+      h("h1", { text: "Analyse" }),
+      h("p", { class: "muted", text: "Gebaseerd op je geïmporteerde TrainingPeaks-weektotalen en handmatige dagmetingen." })),
+    h("section", { class: "stats-grid" },
+      ...[
+        ["Trainingsuren · 4 weken", `${sum("hours").toFixed(1)} u`],
+        ["Ritten · 4 weken", String(sum("rides"))],
+        ["Afstand · 4 weken", `${Math.round(sum("distance_km"))} km`],
+        ["Gemiddeld vermogen", weightedAverage("avg_power") === null ? "—" : `${weightedAverage("avg_power")} W`],
+        ["Gemiddelde hartslag", weightedAverage("avg_heart_rate") === null ? "—" : `${weightedAverage("avg_heart_rate")} bpm`]
+      ].map(([label, value]) => h("article", { class: "stat-card" },
+        h("span", { class: "hint", text: label }), h("strong", { text: value })))),
+    h("section", { class: "card stack" },
+      h("div", { class: "row between" }, h("h2", { text: "Trainingsvolume" }), h("span", { class: "hint", text: "Uren per week · laatste 12 weken" })),
+      bars || h("p", { class: "muted", text: "Importeer TrainingPeaks-gegevens om je trainingsvolume te zien." })),
+    customNames.length ? h("section", { class: "card stack" },
+      h("h2", { text: "Eigen TrainingPeaks-metrics" }),
+      ...customRows) : null,
+    form,
+    h("section", { class: "card stack" },
+      h("h2", { text: "Recente dagmetingen" }),
+      entries.length ? h("div", { class: "wellness-list" },
+        ...entries.slice(0, 10).map(entry => h("article", { class: "wellness-entry" },
+          h("strong", { text: dateLabel(entry.date) }),
+          h("div", { class: "wellness-values" },
+            ...Object.entries(WELLNESS_LABELS).filter(([key]) => entry[key] !== undefined)
+              .map(([key, label]) => h("span", { class: "wellness-value" }, `${label}: `, h("strong", { text: `${entry[key]} ${WELLNESS_UNITS[key]}` }))),
+            entry.note ? h("span", { class: "wellness-value", text: entry.note }) : null)))) :
+        h("p", { class: "muted", text: "Nog geen dagmetingen ingevoerd." })),
+    h("p", { class: "hint", text: "Dit dashboard toont meetwaarden, geen diagnose. De coach kan mogelijke veranderingen bespreken maar kan overtraining niet vaststellen." })
+  );
+}
+
 // ---------- account ----------
 function viewAccount() {
-  renderNav();
+  state.page = "account";
+  renderNav("account");
   const error = h("p", { class: "error", role: "alert" });
   const password = h("input", { type: "password", autocomplete: "current-password", required: true });
   const submit = h("button", { class: "btn danger", type: "submit", text: "Account en gegevens verwijderen" });
@@ -620,7 +843,7 @@ function viewAccount() {
       }
     },
     h("h2", { text: "Account verwijderen" }),
-    h("p", { class: "muted", text: "Dit verwijdert je gebruikersnaam, je schema en alle terugmeldingen. Dat kan niet ongedaan worden gemaakt." }),
+    h("p", { class: "muted", text: "Dit verwijdert je account, schema, chat, TrainingPeaks-samenvatting en dagelijkse metingen. Dat kan niet ongedaan worden gemaakt." }),
     field("Wachtwoord ter bevestiging", password), error, submit)
   );
 }
@@ -634,8 +857,10 @@ async function start() {
     }
     state.data = await api("GET", "/api/plan");
     state.training = (await api("GET", "/api/trainingpeaks")).summary;
+    state.wellness = (await api("GET", "/api/wellness")).entries;
     if (state.data.plan) {
       state.week = state.data.weeks[state.data.weeks.length - 1].week_no;
+      state.page = "plan";
       viewPlan();
     } else viewIntake();
   } catch (e) {

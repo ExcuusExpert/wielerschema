@@ -14,6 +14,8 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 - Eén doorlopende chat met de coach, snel bereikbaar via het menu. Je kunt algemene vragen stellen of een week en training als context kiezen; alleen die workout kan worden aangepast.
 - Kopieer per workout een TrainingPeaks AI-prompt met passende hartslag-, vermogens- of RPE-doelen. Dit is geen automatische koppeling met TrainingPeaks.
 - Wekelijkse check-in (hoeveel gedaan, hoe voelde het, klachten) waarna de volgende week wordt gemaakt.
+- Dashboard met analyse van geïmporteerde trainingsweken en handmatige dagelijkse herstelmetingen (rusthartslag, slaap, Body Battery, stress en HRV; maximaal één jaar terug).
+- De coach kan mogelijke veranderingen in herstelwaarden bespreken, maar stelt geen medische diagnose. Een alternatief trainingsvoorstel wordt pas toegepast nadat je dat bevestigt.
 - Schema van een week downloaden als agenda (.ics).
 - Eigen gegevens downloaden en account verwijderen.
 - Privacyverklaring.
@@ -28,6 +30,7 @@ Nog niet: wachtwoord vergeten (er is geen e-mail), automatische koppeling met Ga
 - IP-adressen worden nooit zelf opgeslagen, alleen een dagelijks wisselende hash voor de limieten.
 - ZIP-uploads zijn beperkt tot 20 MB en worden alleen in het geheugen verwerkt. Geïmporteerde samenvattingen kunnen eigen meetwaarden bevatten en worden, net als de intake, naar Groq gestuurd om het schema te maken.
 - Coachberichten worden met hun week- en trainingscontext bewaard (maximaal 100 berichten per account). De chat gebruikt recente berichten als gesprekscontext; de server controleert elke voorgestelde aanpassing voordat die wordt opgeslagen.
+- Dagmetingen zijn handmatige invoer, geen Garmin-koppeling. De 14 meest recente metingen kunnen als context met Groq worden gedeeld wanneer je de coach gebruikt; metingen worden in je account bewaard totdat je het account verwijdert en zijn beschikbaar in je gegevensdownload.
 
 ## Uitrollen op Cloudflare
 
