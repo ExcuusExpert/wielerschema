@@ -217,7 +217,7 @@ test("jeugdrenners vanaf 12 jaar kunnen een schema aanvragen en krijgen leeftijd
   assert.ok(lastGroqSystemPrompt.includes("ouder/verzorger en gekwalificeerde jeugdtrainer"));
 });
 
-test("profiel bewaart geboortedatum en zones, maar deelt alleen leeftijd met Groq", async () => {
+test("profiel berekent vijf hartslagzones uit maximum en vijf of zeven vermogenszones uit FTP", async () => {
   const env = makeEnv();
   const cookie = await signup(env);
   const created = await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
@@ -226,31 +226,39 @@ test("profiel bewaart geboortedatum en zones, maar deelt alleen leeftijd met Gro
   assert.ok(!lastGroqPrompt.includes(INTAKE.geboortedatum));
 
   const invalid = await api(env, "POST", "/api/account/profile", { profile: {
-    geboortedatum: "1990-06-15", meter: "heart_rate", hr_max: 190, hr_threshold: 170,
-    hr_zones: [120, 140, "", 170, 180, 190]
+    geboortedatum: "1990-06-15", meter: "heart_rate", hr_max: 250
   } }, { cookie });
   assert.equal(invalid.status, 400);
 
   const profile = {
     geboortedatum: "1990-06-15", meter: "both",
-    hr_max: 190, hr_threshold: 170, hr_zones: [120, 140, 155, 170, 180, 190],
-    ftp: 220, power_zones: [121, 165, 198, 231, 264, 330]
+    hr_max: 190, ftp: 220, power_zone_count: 7
   };
   const saved = await api(env, "POST", "/api/account/profile", { profile }, { cookie });
   assert.equal(saved.status, 200, JSON.stringify(saved.data));
   assert.equal(saved.data.plan_updated, true);
-  assert.deepEqual(saved.data.profile.hr_zones, profile.hr_zones);
-  assert.deepEqual(saved.data.profile.power_zones, profile.power_zones);
+  assert.deepEqual(saved.data.profile.hr_zones, [114, 133, 152, 171, 190]);
+  assert.deepEqual(saved.data.profile.power_zones, [121, 165, 198, 231, 264, 330]);
+  assert.equal(Object.hasOwn(saved.data.profile, "hr_threshold"), false);
   const stored = await api(env, "GET", "/api/account/profile", undefined, { cookie });
   assert.equal(stored.data.profile.birth_date, profile.geboortedatum);
   const plan = (await api(env, "GET", "/api/plan", undefined, { cookie })).data.plan;
   assert.equal(plan.intake.meter, "both");
-  assert.deepEqual(plan.intake.hr_zones, profile.hr_zones);
-  assert.deepEqual(plan.intake.power_zones, profile.power_zones);
+  assert.deepEqual(plan.intake.hr_zones, [114, 133, 152, 171, 190]);
+  assert.deepEqual(plan.intake.power_zones, [121, 165, 198, 231, 264, 330]);
+  assert.equal(plan.intake.hr_threshold, undefined);
+  assert.equal(plan.intake.power_zone_count, 7);
   const today = new Date().toISOString().slice(0, 10);
   const expectedAge = Number(today.slice(0, 4)) - 1990 - (today.slice(5) < "06-15" ? 1 : 0);
   assert.equal(plan.intake.leeftijd, expectedAge);
   assert.ok(!JSON.stringify(plan.intake).includes(profile.geboortedatum));
+
+  const fiveZones = await api(env, "POST", "/api/account/profile", { profile: {
+    ...profile, power_zone_count: 5
+  } }, { cookie });
+  assert.equal(fiveZones.status, 200, JSON.stringify(fiveZones.data));
+  assert.deepEqual(fiveZones.data.profile.power_zones, [121, 165, 198, 231]);
+  assert.equal(fiveZones.data.profile.power_zone_count, 5);
 });
 
 test("gebruikersnaam en wachtwoord aanpassen vereist huidig wachtwoord en roteert sessies", async () => {
@@ -305,16 +313,34 @@ test("training handmatig aanpassen slaat alleen een geldige wijziging op", async
   }, { cookie })).status, 400);
 
   const updated = await edit({
-    type: "tempo", minuten: 55, zone: "Z3", titel: "Handmatige tempotraining", beschrijving: "55 minuten, RPE 5."
+    type: "tempo", minuten: 55, zone: "Z3", titel: "Handmatige tempotraining", beschrijving: "55 minuten, RPE 5.",
+    blokken: [
+      { minuten: 10, zone: "Z1", label: "Warming-up" },
+      { minuten: 15, zone: "Z4", label: "Interval" },
+      { minuten: 5, zone: "Z2", label: "Herstel" },
+      { minuten: 15, zone: "Z4", label: "Interval" },
+      { minuten: 10, zone: "Z1", label: "Cooling-down" }
+    ]
   });
   assert.equal(updated.status, 200, JSON.stringify(updated.data));
-  assert.equal(updated.data.week.dagen.find(day => day.dag === 3).titel, "Handmatige tempotraining");
-  assert.equal(updated.data.week.dagen.find(day => day.dag === 3).minuten, 55);
+  const updatedWorkout = updated.data.week.dagen.find(day => day.dag === 3);
+  assert.equal(updatedWorkout.titel, "Handmatige tempotraining");
+  assert.equal(updatedWorkout.minuten, 55);
+  assert.deepEqual(updatedWorkout.blokken.map(({ minuten, zone }) => ({ minuten, zone })), [
+    { minuten: 10, zone: "Z1" }, { minuten: 15, zone: "Z4" }, { minuten: 5, zone: "Z2" },
+    { minuten: 15, zone: "Z4" }, { minuten: 10, zone: "Z1" }
+  ]);
+  const invalidBlocks = await edit({
+    type: "tempo", minuten: 55, zone: "Z3", titel: "Zonder geldig profiel", beschrijving: "55 minuten, RPE 5.",
+    blokken: [{ minuten: 54, zone: "Z2", label: "Te kort" }]
+  });
+  assert.equal(invalidBlocks.status, 200);
+  assert.equal(invalidBlocks.data.week.dagen.find(day => day.dag === 3).blokken, undefined);
   assert.deepEqual(updated.data.week.dagen.find(day => day.dag === 1), unchanged);
   assert.equal(updated.data.week.totaal_minuten,
     updated.data.week.dagen.filter(day => day.type !== "rust").reduce((sum, day) => sum + day.minuten, 0));
   const saved = await api(env, "GET", "/api/plan", undefined, { cookie });
-  assert.equal(saved.data.weeks[0].dagen.find(day => day.dag === 3).titel, "Handmatige tempotraining");
+  assert.equal(saved.data.weeks[0].dagen.find(day => day.dag === 3).titel, "Zonder geldig profiel");
 
   await api(env, "POST", "/api/plan/checkin", {
     week_no: 1, gedaan_pct: 75, uren_gedaan: 4, gevoel: 3, klachten: true
@@ -329,6 +355,27 @@ test("training handmatig aanpassen slaat alleen een geldige wijziging op", async
     workout: { type: "duurrit", minuten: 30, zone: "Z2", titel: "Rustige duur", beschrijving: "Rustig, RPE 2." }
   }, { cookie });
   assert.equal(safe.status, 200, JSON.stringify(safe.data));
+});
+
+test("handmatige trainingszones volgen het gekozen zoneprofiel", async () => {
+  const cases = [
+    { meter: "heart_rate", hr_max: 190, invalid: "Z6", valid: "Z5" },
+    { meter: "power", ftp: 220, power_zone_count: 5, invalid: "Z6", valid: "Z5" },
+    { meter: "power", ftp: 220, power_zone_count: 7, valid: "Z7" }
+  ];
+  for (const [index, settings] of cases.entries()) {
+    const env = makeEnv();
+    const cookie = await signup(env, `zones${index}`);
+    const intake = { ...INTAKE, ...settings };
+    const created = await api(env, "POST", "/api/plan/create", { intake }, { cookie });
+    assert.equal(created.status, 200, JSON.stringify(created.data));
+    const edit = zone => api(env, "POST", "/api/plan/workout", {
+      week_no: 1, day_no: 3,
+      workout: { type: "duurrit", minuten: 30, zone, titel: "Zonecontrole", beschrijving: "Rustig trainen." }
+    }, { cookie });
+    if (settings.invalid) assert.equal((await edit(settings.invalid)).status, 400, `${settings.meter} ${settings.invalid}`);
+    assert.equal((await edit(settings.valid)).status, 200, `${settings.meter} ${settings.valid}`);
+  }
 });
 
 test("coachchat toont ook bij een expliciet verzoek eerst een voorstel en past pas na akkoord toe", async () => {

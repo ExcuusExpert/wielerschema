@@ -11,20 +11,21 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 - Intakewizard in drie stappen: doel, geboortedatum en niveau; trainingstijd en dagen; meetapparatuur, beperkingen en overige trainingservaring.
 - Jeugdrenners van 12–17 krijgen terughoudender coachinstructies en een zichtbare oproep om een ouder/verzorger en jeugdtrainer mee te laten kijken.
 - Intake: doel, datum, niveau, uren per week, beschikbare dagen, ervaring en beperkingen. Een geboortedatum is verplicht; alleen de berekende leeftijd gaat naar Groq.
-- Keuze uit vermogensmeter, hartslagmeter, beide of geen van beide. Voor hartslagtraining vul je maximale en drempelhartslag in; voor vermogen je FTP. Per gekozen meetmethode kun je de zes zonegrenzen aanpassen. De voorgestelde startzones zijn schattingen op basis van gangbare percentages, geen medisch advies of vervanging van een test.
-- Een aparte activiteitenpagina en een voorbereide Garmin-koppelingspagina. Garmin API-toegang en automatische synchronisatie zijn nog niet beschikbaar.
+- Keuze uit vermogensmeter, hartslagmeter, beide of geen van beide. Vijf hartslagzones worden berekend uit je maximale hartslag. Voor vermogen vul je je FTP in en kies je vijf of zeven zones; de standaardgrenzen volgen FTP-percentages en kunnen worden aangepast.
+- Activiteitenpagina's voor Garmin en Wahoo zijn voorbereid, maar beide koppelingen wachten op officiële API-toegang. Er worden nog geen externe activiteiten gesynchroniseerd.
 - AI stelt maximaal 5 vervolgvragen in een chatweergave, maakt een overzicht van alle weken en werkt week 1 uit.
 - Eén doorlopende, WhatsApp-achtige chat met de coach; de coach gebruikt je schema zonder dat je week of dag hoeft te kiezen.
-- Pas trainingsdagen ook zelf aan: trainingstype, duur, zone, titel en beschrijving. Handmatige wijzigingen worden direct opgeslagen; de weeklimiet en gezondheidswaarschuwingen blijven gelden.
-- Open een trainingsdag voor details en handmatig aanpassen. Een optionele TrainingPeaks AI-prompt kan vanuit het detailvenster worden gekopieerd; er worden geen TrainingPeaks-gegevens geïmporteerd.
+- Pas trainingsdagen ook zelf aan: trainingstype, duur, zone, titel en beschrijving. Handmatige wijzigingen worden direct opgeslagen; de beschikbare zones, weeklimiet en gezondheidswaarschuwingen blijven gelden.
+- Open een trainingsdag voor details en handmatig aanpassen. Het detailvenster toont een zoneprofiel met warming-up, intervallen en herstel waar die blokken beschikbaar zijn; anders is de opbouw nadrukkelijk als schematisch gemarkeerd.
+- De TrainingPeaks-import is verwijderd. Een optionele prompt om een training in TrainingPeaks AI te laten opbouwen is nog beschikbaar vanuit de trainingsdetails.
 - Na afloop vraagt de coach in de chat hoe je week ging; op basis van je antwoord maakt die de volgende week.
-- Dashboard met analyse van geïmporteerde trainingsweken en handmatige dagelijkse herstelmetingen (rusthartslag, slaap, Body Battery, stress en HRV; maximaal één jaar terug).
-- De coach kan mogelijke veranderingen in herstelwaarden bespreken, maar stelt geen medische diagnose. Elke voorgestelde wijziging aan een training verschijnt eerst ter beoordeling en wordt pas na bevestiging toegepast.
+- Activiteiten en automatische trainings- of herstelmetrics zijn nog niet beschikbaar zolang de externe koppelingen niet actief zijn.
+- Elke voorgestelde wijziging aan een training verschijnt eerst ter beoordeling en wordt pas na bevestiging toegepast.
 - Schema van een week downloaden als agenda (.ics).
 - Onder Account kun je je geboortedatum, meetapparatuur en trainingszones aanpassen, je gebruikersnaam of wachtwoord wijzigen, je gegevens downloaden en je account verwijderen.
 - Privacyverklaring.
 
-Nog niet: wachtwoord vergeten (er is geen e-mail), automatische koppelingen met Garmin, Strava of Wahoo. De Garmin-koppelingspagina is alleen een voorbereiding; er is nog geen login of synchronisatie.
+Nog niet: wachtwoord vergeten (er is geen e-mail), automatische koppelingen met Garmin, Strava of Wahoo. De Garmin- en Wahoo-pagina's zijn alleen voorbereidingen; er is nog geen login of synchronisatie.
 
 ## Veiligheid en vangrails
 

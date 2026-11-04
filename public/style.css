@@ -120,13 +120,7 @@ fieldset.days legend { padding: 0 6px; font-weight: 600; font-size: .92rem; }
 .prompt-chip:hover { border-color: var(--accent); color: var(--accent); }
 .coach-chat-form textarea { min-height: 86px; }
 .coach-submit-row { align-items: center; }
-.typing { display: flex; align-items: center; min-height: 42px; }
-.typing-dots { display: flex; gap: 5px; }
-.typing-dots i { width: 6px; height: 6px; border-radius: 50%; background: #c5d6ca; animation: typing 1.2s infinite ease-in-out; }
-.typing-dots i:nth-child(2) { animation-delay: .15s; }
-.typing-dots i:nth-child(3) { animation-delay: .3s; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-@keyframes typing { 0%, 60%, 100% { transform: translateY(0); opacity: .45; } 30% { transform: translateY(-4px); opacity: 1; } }
 
 .outline { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { display: flex; flex-direction: column; gap: 1px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card2); font-size: .8rem; min-width: 74px; }
@@ -153,25 +147,33 @@ fieldset.days legend { padding: 0 6px; font-weight: 600; font-size: .92rem; }
 .t-vo2max, .t-sprint { border-top-color: var(--danger); }
 .t-kracht, .t-techniek { border-top-color: #b28dff; }
 .t-race { border-top-color: var(--accent); }
-.week-visual { display: grid; grid-template-columns: repeat(7, minmax(72px, 1fr)); gap: 9px; overflow-x: auto; padding: 8px 2px 12px; }
-.week-visual-day { display: flex; min-height: 164px; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; padding: 9px 5px; border: 1px solid var(--line); border-radius: 14px; background: #fff; color: var(--text); font: inherit; cursor: pointer; }
-.week-visual-day:hover { border-color: #99b58a; background: #f8fbf6; }
-.visual-day-label { font-weight: 800; }
-.visual-day-date, .visual-type { color: var(--muted); font-size: .72rem; }
-.visual-bar-track { display: flex; width: 100%; height: 74px; align-items: flex-end; justify-content: center; }
-.visual-bar { width: min(34px, 54%); min-height: 3px; border-radius: 8px 8px 3px 3px; background: linear-gradient(180deg, #90bd70, #557d3e); }
-.visual-bar-level-1 { height: 20%; }
-.visual-bar-level-2 { height: 40%; }
-.visual-bar-level-3 { height: 60%; }
-.visual-bar-level-4 { height: 80%; }
-.visual-bar-level-5 { height: 100%; }
-.visual-rest .visual-bar { background: #dce5d8; }
-.visual-duration { font-size: .8rem; }
-.visual-type { text-align: center; }
 .modal-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; overflow-y: auto; padding: 20px; background: rgb(20 31 24 / 56%); }
 .workout-details { width: min(100%, 560px); max-height: min(90vh, 780px); overflow-y: auto; padding: clamp(18px, 4vw, 28px); border: 1px solid var(--line); border-radius: 20px; background: #fff; box-shadow: 0 24px 80px rgb(15 26 18 / 24%); }
 .workout-detail-summary { display: grid; justify-items: start; gap: 10px; }
 .workout-detail-summary > strong { font-size: 1.4rem; }
+.workout-profile { display: grid; gap: 9px; width: 100%; margin: 4px 0; }
+.workout-profile figcaption { display: grid; gap: 2px; }
+.workout-profile-chart { display: flex; align-items: flex-end; width: 100%; height: 132px; overflow: hidden; border-bottom: 1px solid #cbd6df; background: repeating-linear-gradient(to top, #edf2f6 0 1px, transparent 1px 25%); }
+.profile-segment { position: relative; display: flex; flex: 1 1 0; min-width: 3px; align-items: flex-start; justify-content: center; border-top: 3px solid #2455f4; background: #075b92; transition: height .2s ease; }
+.profile-segment + .profile-segment { border-left: 2px solid #fff; }
+.profile-z1 { background: #166c9c; }
+.profile-z2 { background: #075b92; }
+.profile-z3 { background: #064e83; }
+.profile-z4, .profile-z5 { background: #093d77; }
+.profile-z6, .profile-z7 { background: #102c66; }
+.profile-zone-unknown { background: #6b8394; border-color: #8799a6; }
+.profile-zone-label { padding-top: 5px; color: #fff; font-size: .68rem; font-weight: 800; text-shadow: 0 1px 2px #092941; }
+.profile-time-axis { display: flex; justify-content: space-between; color: var(--muted); font-size: .7rem; }
+.zone-ranges { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 6px; margin: 0; padding: 0; list-style: none; }
+.zone-ranges li { display: flex; justify-content: space-between; gap: 6px; padding: 6px 8px; border-radius: 8px; background: #f1f5f2; font-size: .8rem; }
+.zone-ranges li strong { color: #3e6530; }
+.coach-thinking { display: inline-flex; align-items: center; gap: 10px; color: #52635a; }
+.coach-wheel { position: relative; display: inline-block; flex: 0 0 24px; width: 24px; height: 24px; border: 2px solid #547a45; border-radius: 50%; animation: wheel-spin .8s linear infinite; }
+.coach-wheel::before, .coach-wheel::after, .coach-wheel-spokes::before, .coach-wheel-spokes::after { position: absolute; top: 50%; left: 50%; width: 1px; height: 20px; background: #547a45; content: ""; transform: translate(-50%, -50%); }
+.coach-wheel::after { transform: translate(-50%, -50%) rotate(90deg); }
+.coach-wheel-spokes::before { transform: translate(-50%, -50%) rotate(45deg); }
+.coach-wheel-spokes::after { transform: translate(-50%, -50%) rotate(-45deg); }
+@keyframes wheel-spin { to { transform: rotate(360deg); } }
 .optional-trainingpeaks { padding-top: 12px; border-top: 1px solid var(--line); }
 .optional-trainingpeaks summary { color: var(--muted); font-size: .86rem; cursor: pointer; }
 .optional-trainingpeaks .btn { margin-top: 10px; }
@@ -190,6 +192,7 @@ fieldset.days legend { padding: 0 6px; font-weight: 600; font-size: .92rem; }
 .integration-card { display: grid; grid-template-columns: 46px minmax(0, 1fr); align-items: center; gap: 14px; }
 .integration-mark { display: grid; width: 44px; height: 44px; place-items: center; border-radius: 14px; background: #f0f2f1; color: #34403a; font-weight: 850; }
 .strava-mark { color: #fff; background: #fc4c02; }
+.wahoo-mark { color: #fff; background: #1687c9; }
 @media (max-width: 560px) {
   .activity-reflection { align-items: stretch; flex-direction: column; }
   .activity-reflection .btn { width: 100%; }

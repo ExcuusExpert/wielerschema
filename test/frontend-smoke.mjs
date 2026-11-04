@@ -12,7 +12,21 @@ class FakeD1 {
     async run() { db.prepare(sql).run(...this.args); return {}; } }; }
   async batch(s) { for (const x of s) await x.run(); return []; }
 }
-const week = (m) => ({ dagen: Array.from({ length: 7 }, (_, d) => ({ dag: d, type: "duurrit", minuten: m, zone: "Z2", titel: "Duurrit", beschrijving: "Rustig, RPE 4" })), tips: "Drink genoeg." });
+const week = (m) => ({
+  dagen: Array.from({ length: 7 }, (_, d) => {
+    const warmup = Math.round(m * 0.15);
+    const cooldown = Math.round(m * 0.15);
+    return {
+      dag: d, type: "duurrit", minuten: m, zone: "Z2", titel: "Duurrit", beschrijving: "Rustig, RPE 4",
+      blokken: [
+        { minuten: warmup, zone: "Z1", label: "Warming-up" },
+        { minuten: m - warmup - cooldown, zone: "Z2", label: "Hoofdset" },
+        { minuten: cooldown, zone: "Z1", label: "Cooling-down" }
+      ]
+    };
+  }),
+  tips: "Drink genoeg."
+});
 let coachTurn = 0;
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (url, init) => {
@@ -70,10 +84,16 @@ const find = (root, pred) => { const out = []; walk(root, (e) => { if (pred(e)) 
 const root = { app: new El("main"), nav: new El("nav"), account: new El("div"), launcher: new El("div") };
 const jar = {};
 const env = { DB: new FakeD1(), GROQ_API_KEY: "test" };
+const scheduledTimeouts = [];
 const sandbox = {
-  console, Date, Math, JSON, Number, String, Array, Promise, Object, Error, setTimeout, URL: { createObjectURL: () => "blob:x" }, Blob: class {},
+  console, Date, Math, JSON, Number, String, Array, Promise, Object, Error,
+  setTimeout: (callback, delay) => {
+    scheduledTimeouts.push(delay);
+    return globalThis.setTimeout(callback, delay === 3000 ? 100 : delay);
+  },
+  URL: { createObjectURL: () => "blob:x" }, Blob: class {},
   document: { getElementById: (id) => ({ app: root.app, nav: root.nav, "sidebar-account": root.account, "coach-launcher": root.launcher })[id], createElement: (t) => new El(t), createTextNode: (t) => new TextNode(t), body: new El("body") },
-  window: { scrollTo() {} }, navigator: { clipboard: { writeText: async (value) => { sandbox.copiedText = value; } } }, confirm: () => true,
+  window: { scrollY: 0, scrollTo(_x, y) { this.scrollY = y; } }, navigator: { clipboard: { writeText: async (value) => { sandbox.copiedText = value; } } }, confirm: () => true,
   copiedText: "",
   fetch: async (path, init = {}) => {
     const headers = { ...(init.headers || {}), "CF-Connecting-IP": "1.1.1.1" };
@@ -111,7 +131,11 @@ ok(text().includes("Geboortedatum") && text().includes("ouder/verzorger"), "gebo
 find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "goal")[0].value = "Toertocht van 120 km";
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Volgende")[0].click();
 ok(text().includes("Vul je geldige geboortedatum in"), "wizard controleert geboortedatum voor doorgaan");
-find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "geboortedatum")[0].value = youthBirthDate.toISOString().slice(0, 10);
+const birthInput = find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "geboortedatum")[0];
+const birthIso = youthBirthDate.toISOString().slice(0, 10);
+birthInput.value = `${birthIso.slice(8, 10)}-${birthIso.slice(5, 7)}-${birthIso.slice(0, 4)}`;
+for (const listener of birthInput.listeners.blur || []) listener();
+ok(birthInput.value === `${birthIso.slice(8, 10)}-${birthIso.slice(5, 7)}-${birthIso.slice(0, 4)}`, "geboortedatum wordt in DD-MM-JJJJ getoond");
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Volgende")[0].click();
 ok(text().includes("2. Jouw tijd"), "wizard gaat door naar beschikbare tijd");
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Volgende")[0].click();
@@ -127,13 +151,34 @@ const chooseMeter = value => {
   for (const listener of meter.listeners.change || []) listener();
 };
 chooseMeter("heart_rate");
-find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "hr_max")[0].value = "190";
-find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "hr_threshold")[0].value = "170";
+const hrMaxInput = find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "hr_max")[0];
+hrMaxInput.value = "190";
+for (const listener of hrMaxInput.listeners.input || []) listener();
 chooseMeter("both");
 ok(find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "hr_max")[0].value === "190" &&
   find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "ftp").length === 1,
   "meterkeuze toont beide kalibraties zonder ingevulde hartslaggegevens te wissen");
-find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "ftp")[0].value = "220";
+const ftpInput = find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "ftp")[0];
+ftpInput.value = "220";
+for (const listener of ftpInput.listeners.input || []) listener();
+const hrZones = find(root.app, e => e.className === "zone-ranges")[0];
+ok(hrZones.children.length === 5 && hrZones.children[0].children[1].textContent === "≤ 114 bpm" &&
+  !find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "hr_threshold").length,
+  "maximale hartslag 190 toont vijf berekende zones zonder drempelhartslag");
+const powerCount = find(root.app, e => e.tagName === "SELECT" && e.attrs.name === "power_zone_count")[0];
+const choosePowerCount = value => {
+  for (const option of powerCount.children) delete option.attrs.selected;
+  powerCount.children.find(option => option.attrs.value === String(value)).attrs.selected = "";
+  for (const listener of powerCount.listeners.change || []) listener();
+};
+choosePowerCount(5);
+ok(find(root.app, e => e.className === "zone-ranges")[1].children.length === 5 &&
+  find(root.app, e => e.className === "zone-ranges")[1].textContent.includes("> 231 W"),
+  "vijf vermogenszones gebruiken 105% FTP als bovengrens van Z4");
+choosePowerCount(7);
+ok(find(root.app, e => e.className === "zone-ranges")[1].children.length === 7 &&
+  find(root.app, e => e.className === "zone-ranges")[1].textContent.includes("> 330 W"),
+  "zeven vermogenszones bevatten de grenzen tot en met 150% FTP");
 
 await submit(find(root.app, e => e.tagName === "FORM")[0]);
 ok(text().includes("Vragen van de coach") && text().includes("Hoeveel uur train je nu?"), "eerste coachvraag in chat getoond");
@@ -146,15 +191,20 @@ await submit(find(root.app, e => e.tagName === "FORM")[0]);
 ok(text().includes("Toertocht van 120 km") && text().includes("Week 1") && text().includes("Rustige opbouw"), "schema getoond met week 1");
 ok(text().includes("Jeugdrenner: train met begeleiding"), "jeugdrenner krijgt een blijvende begeleidingsmelding bij het schema");
 ok(find(root.app, e => e.className.includes("day")).length >= 7, "zeven dagkaarten");
-ok(find(root.app, e => e.className.includes("week-visual-day")).length === 7, "week heeft een visueel overzicht van alle zeven dagen");
+ok(!find(root.app, e => e.className.includes("week-visual-day")).length &&
+  !text().includes("Hoeveel uur per dag"), "oude weekbalkjes en uren-per-daggrafiek zijn verwijderd");
 ok(!text().includes("Hoeveel van het schema heb je gedaan?"), "oude weekcheck-in met formulier is verwijderd");
 ok(!text().includes("Dagmetingen") && !text().includes("Kopieer trainingsprompt"), "dagmetingen en TrainingPeaks-prompt staan niet prominent in het weekschema");
 const planData = await (await sandbox.fetch("/api/plan")).json();
 const dayToEdit = planData.plan.intake.dagen[0];
-const dayButton = find(root.app, e => e.className.includes("week-visual-day"))[dayToEdit];
+const dayButton = find(root.app, e => e.className.includes("day-details-button"))[dayToEdit];
 dayButton.click();
 ok(find(root.app, e => e.attrs.role === "dialog").length === 1 && text().includes("Training aanpassen"),
   "op een dag klikken opent een detailvenster");
+ok(find(root.app, e => e.className === "workout-profile-chart").length === 1 &&
+  find(root.app, e => e.className.includes("profile-segment")).length === 3 &&
+  text().includes("De blokken volgen de trainingsopbouw uit het schema."),
+  "duurtraining toont de drie werkelijke trainingsblokken in de detailpopup");
 ok(text().includes("Optioneel: gebruiken in TrainingPeaks AI"), "TrainingPeaks-prompt zit achter een optionele uitklapper");
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer trainingsprompt")[0].click();
 await tick();
@@ -164,16 +214,23 @@ const editForm = find(root.app, e => e.tagName === "FORM" && e.className.include
 find(editForm, e => e.tagName === "INPUT" && e.attrs.type === "number")[0].value = "70";
 find(editForm, e => e.tagName === "INPUT" && e.attrs.type === "text")[0].value = "Handmatige duurrit";
 find(editForm, e => e.tagName === "TEXTAREA")[0].value = "70 minuten rustig, RPE 3.";
+const typeSelect = find(editForm, e => e.tagName === "SELECT")[0];
+for (const option of typeSelect.children) delete option.attrs.selected;
+typeSelect.children.find(option => option.attrs.value === "vo2max").attrs.selected = "";
+for (const listener of typeSelect.listeners.change || []) listener();
 const zoneSelect = find(editForm, e => e.tagName === "SELECT")[1];
 for (const option of zoneSelect.children) delete option.attrs.selected;
-zoneSelect.children.find(option => option.attrs.value === "Z1").attrs.selected = "";
+zoneSelect.children.find(option => option.attrs.value === "Z4").attrs.selected = "";
+ok(!zoneSelect.children.some(option => option.attrs.value === "Z8"), "handmatige training biedt geen zone boven het ingestelde profiel");
 await submit(editForm);
 ok(text().includes("Handmatige duurrit") && text().includes("1 u 10 min"), "training handmatig aanpassen slaat wijzigingen in het schema op");
-find(root.app, e => e.className.includes("week-visual-day"))[dayToEdit].click();
+find(root.app, e => e.className.includes("day-details-button"))[dayToEdit].click();
+ok(find(root.app, e => e.className.includes("profile-segment")).length > 3 && text().includes("Schematische opbouw"),
+  "intervaltraining toont afwisselende zones met een label voor de schematische intervallen");
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer trainingsprompt")[0].click();
 await tick();
 ok(sandbox.copiedText.includes("Duration: 70 minuten") &&
-  sandbox.copiedText.includes("Target: Z1 volgens mijn ingestelde hartslagzones, 70 minuten rustig, RPE 3.") &&
+  sandbox.copiedText.includes("Target: Z4 volgens mijn ingestelde hartslagzones, 70 minuten rustig, RPE 3.") &&
   sandbox.copiedText.includes("Training: Handmatige duurrit."),
   "TrainingPeaks-prompt gebruikt de nieuwste handmatig opgeslagen training");
 
@@ -184,6 +241,10 @@ find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Garmin koppelen
 ok(text().includes("Koppel Garmin") && text().includes("Koppeling nog niet actief") &&
   find(root.app, e => e.tagName === "BUTTON" && e.attrs.disabled !== undefined && e.textContent === "Garmin binnenkort koppelen").length === 1,
   "Garmin-pagina toont een duidelijke status zonder een niet-bestaande koppeling te suggereren");
+find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Wahoo koppelen")[0].click();
+ok(text().includes("Koppel Wahoo") && text().includes("Koppeling nog niet actief") &&
+  find(root.app, e => e.tagName === "BUTTON" && e.attrs.disabled !== undefined && e.textContent === "Wahoo binnenkort koppelen").length === 1,
+  "Wahoo-pagina is voorbereid zonder een nepverbinding of synchronisatie");
 
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Coach")[0].click();
 await tick();
@@ -193,10 +254,14 @@ ok(!text().includes("dagelijkse meetwaarden"), "coach krijgt nog geen automatisc
 let coachForm = find(root.app, e => e.tagName === "FORM" &&
   find(e, child => child.className === "chat-send").length)[0];
 find(coachForm, e => e.tagName === "TEXTAREA")[0].value = "Ik heb komende zaterdag een MTB-rit met de club. Kan je dat erop zetten?";
+sandbox.window.scrollTo(0, 777);
 const chatSending = submit(coachForm);
-await tick();
-ok(text().includes("De coach is je bericht aan het verwerken"), "coachchat toont een zichtbare laadstatus tijdens antwoord");
+await new Promise(resolve => globalThis.setTimeout(resolve, 10));
+ok(text().includes("De coach denkt mee…") && find(root.app, e => e.className === "coach-wheel").length === 1,
+  "coachchat toont tijdens het nadenken het draaiende fietswiel");
 await chatSending;
+ok(sandbox.window.scrollY === 777 && scheduledTimeouts.includes(3000),
+  "chat behoudt de scrollpositie en wacht minimaal drie seconden voor een coachreactie");
 ok(text().includes("Hoe lang duurt de rit ongeveer?"), "coach vraagt alleen de ontbrekende ritduur");
 coachForm = find(root.app, e => e.tagName === "FORM" &&
   find(e, child => child.className === "chat-send").length)[0];
@@ -228,7 +293,7 @@ ok(text().includes("Heb je kunnen trainen, en hoe voelde het?"), "coach vraagt z
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Account")[0].click();
 ok(text().includes("Ingelogd als") && text().includes("hessel"), "accountpagina");
 ok(text().includes("Trainingsprofiel") && text().includes("Geboortedatum") &&
-  text().includes("Hartslagzones aanpassen") && text().includes("Gebruikersnaam en wachtwoord"),
+  text().includes("60%, 70%, 80%, 90% en 100%") && text().includes("Gebruikersnaam en wachtwoord"),
   "account bevat bewerkbaar trainingsprofiel en inloggegevens");
 const accountForms = find(root.app, e => e.tagName === "FORM");
 await submit(accountForms[0]);
