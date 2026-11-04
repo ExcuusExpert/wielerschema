@@ -13,6 +13,7 @@ class FakeD1 {
   async batch(s) { for (const x of s) await x.run(); return []; }
 }
 const week = (m) => ({ dagen: Array.from({ length: 7 }, (_, d) => ({ dag: d, type: "duurrit", minuten: m, zone: "Z2", titel: "Duurrit", beschrijving: "Rustig, RPE 4" })), tips: "Drink genoeg." });
+let coachTurn = 0;
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (url, init) => {
   if (!String(url).includes("api.groq.com")) return realFetch(url, init);
@@ -23,10 +24,18 @@ globalThis.fetch = async (url, init) => {
     const n = Number(prompt.match(/van (\d+) weken/)[1]);
     content = JSON.stringify({ samenvatting: "Rustige opbouw naar je doel.", weken: Array.from({ length: n }, (_, i) => ({ week: i + 1, fase: "opbouw", focus: "Basis", uren: 6 })), week1: week(90) });
   } else if (prompt.includes("Maak nu week")) content = JSON.stringify({ uitleg: "Iets rustiger.", week: week(80) });
-  else if (prompt.includes("Nieuw bericht van de gebruiker")) content = JSON.stringify({
-    antwoord: "Ik stel een rustige duurtraining voor. Pas ik die voor je toe?",
-    voorstel: { type: "duurrit", minuten: 55, zone: "Z2", titel: "Rustige duur", beschrijving: "55 minuten op Z2, RPE 3-4." }
-  });
+  else if (prompt.includes("Nieuw bericht van de gebruiker")) {
+    coachTurn++;
+    content = coachTurn === 1 ? JSON.stringify({
+      antwoord: "Hoe lang duurt de rit ongeveer? Ik kan de intensiteit open laten.",
+      voorstel: null,
+      week_feedback: null
+    }) : JSON.stringify({
+      antwoord: "Ik heb de MTB-rit op zaterdag in je schema gezet.",
+      voorstel: { dag: 5, type: "mtb", minuten: 45, zone: "Z2", titel: "MTB-rit met de club", beschrijving: "45 minuten op Z2." },
+      week_feedback: null
+    });
+  }
   return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 });
 };
 
@@ -95,8 +104,20 @@ await submit(find(root.app, e => e.tagName === "FORM")[0]);
 ok(text().includes("Jouw doel en situatie"), "na registreren: intakeformulier");
 ok(text().includes("Welke meetapparatuur gebruik je?") && text().includes("TrainingPeaks-gegevens importeren"), "meterkeuze en route naar TrainingPeaks-import zichtbaar");
 const meter = find(root.app, e => e.tagName === "SELECT")[1];
-for (const option of meter.children) delete option.attrs.selected;
-meter.children.find(option => option.attrs.value === "heart_rate").attrs.selected = "";
+const chooseMeter = value => {
+  for (const option of meter.children) delete option.attrs.selected;
+  meter.children.find(option => option.attrs.value === value).attrs.selected = "";
+  for (const listener of meter.listeners.change || []) listener();
+};
+chooseMeter("heart_rate");
+find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "geboortedatum")[0].value = "1990-06-15";
+find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "hr_max")[0].value = "190";
+find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "hr_threshold")[0].value = "170";
+chooseMeter("both");
+ok(find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "hr_max")[0].value === "190" &&
+  find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "ftp").length === 1,
+  "meterkeuze toont beide kalibraties zonder ingevulde hartslaggegevens te wissen");
+find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "ftp")[0].value = "220";
 
 const doel = find(root.app, e => e.tagName === "INPUT" && e.attrs.type === "text")[0];
 doel.value = "Toertocht van 120 km";
@@ -110,7 +131,7 @@ find(root.app, e => e.tagName === "TEXTAREA")[0].value = "Ja, een beetje";
 await submit(find(root.app, e => e.tagName === "FORM")[0]);
 ok(text().includes("Toertocht van 120 km") && text().includes("Week 1") && text().includes("Rustige opbouw"), "schema getoond met week 1");
 ok(find(root.app, e => e.className.includes("day")).length >= 7, "zeven dagkaarten");
-ok(text().includes("Hoe ging week 1?"), "check-in formulier onder de laatste week");
+ok(!text().includes("Hoeveel van het schema heb je gedaan?"), "oude weekcheck-in met formulier is verwijderd");
 ok(text().includes("Dagmetingen en analyse bekijken") && text().includes("Kopieer prompt voor TrainingPeaks AI"), "herstelmetingen en TrainingPeaks-workoutprompt zichtbaar");
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer prompt voor TrainingPeaks AI")[0].click();
 await tick();
@@ -124,31 +145,48 @@ ok(text().includes("Recente dagmetingen") && text().includes("52 bpm"), "dagmeti
 
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Coach")[0].click();
 await tick();
-const coachForm = find(root.app, e => e.tagName === "FORM" &&
-  find(e, child => child.tagName === "BUTTON" && child.textContent === "Stuur naar de coach").length)[0];
-find(coachForm, e => e.tagName === "TEXTAREA")[0].value = "Maak deze training rustiger.";
-const before = await (await sandbox.fetch("/api/plan")).json();
-const beforeMinutes = before.weeks[0].dagen.find(day => day.dag === 1).minuten;
+ok(!text().includes("Week als context") && !text().includes("Training als context") && !text().includes("Week 1 · Ma"), "chat toont geen week- of dagcontext");
+ok(root.launcher.textContent.includes("Je wielercoach"), "coachknop heeft een herkenbare compacte launcher");
+let coachForm = find(root.app, e => e.tagName === "FORM" &&
+  find(e, child => child.className === "chat-send").length)[0];
+find(coachForm, e => e.tagName === "TEXTAREA")[0].value = "Ik heb komende zaterdag een MTB-rit met de club. Kan je dat erop zetten?";
 const chatSending = submit(coachForm);
 await tick();
 ok(text().includes("De coach is je bericht aan het verwerken"), "coachchat toont een zichtbare laadstatus tijdens antwoord");
 await chatSending;
-ok(text().includes("Ik stel een rustige duurtraining voor") && text().includes("Pas training aan"), "coachchat toont een voorstel dat wacht op bevestiging");
-const stillUnchanged = await (await sandbox.fetch("/api/plan")).json();
-ok(stillUnchanged.weeks[0].dagen.find(day => day.dag === 1).minuten === beforeMinutes, "training blijft ongewijzigd totdat de gebruiker bevestigt");
-find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Pas training aan")[0].click();
+ok(text().includes("Hoe lang duurt de rit ongeveer?"), "coach vraagt alleen de ontbrekende ritduur");
+coachForm = find(root.app, e => e.tagName === "FORM" &&
+  find(e, child => child.className === "chat-send").length)[0];
+find(coachForm, e => e.tagName === "TEXTAREA")[0].value = "Ik weet nog niet welke zones en intensiteiten, dus laat dat leeg.";
+await submit(coachForm);
 await tick();
-await tick();
+ok(text().includes("Ik heb MTB-rit met de club op zaterdag in je schema gezet."), "duidelijke planningsopdracht wordt direct toegepast");
 const afterApply = await (await sandbox.fetch("/api/plan")).json();
-ok(afterApply.weeks[0].dagen.find(day => day.dag === 1).minuten === 55, "training verandert pas na bevestiging");
+const saturday = afterApply.weeks[0].dagen.find(day => day.dag === 5);
+ok(saturday.type === "mtb" && saturday.titel === "MTB-rit met de club" && saturday.zone === "" && saturday.beschrijving === "Intensiteit en trainingszone zijn nog open.", "MTB-rit staat op zaterdag met lege intensiteit");
+const oldStart = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+env.DB.db.prepare("UPDATE plans SET start_date = ?").run(oldStart);
+await vm.runInContext("start()", sandbox);
+await tick();
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Plan")[0].click();
-
-const checkin = find(root.app, e => e.tagName === "FORM" && e.children.some(c => c.tagName === "BUTTON" && c.textContent === "Maak week 2"))[0];
-await submit(checkin);
-ok(text().includes("Week 2") && text().includes("Iets rustiger."), "na check-in: week 2 met uitleg van de coach");
-ok(!text().includes("Hoe ging week 1?") && text().includes("Hoe ging week 2?"), "check-in hoort nu bij week 2");
+ok(!text().includes("Hoeveel van het schema heb je gedaan?"), "plan bevat geen lang weekcheck-informulier");
+ok(text().includes("Vertel het aan je coach"), "plan nodigt na de week uit voor een chat-terugblik");
+find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Coach")[0].click();
+await tick();
+ok(text().includes("Heb je kunnen trainen, en hoe voelde het?"), "coach vraagt zelf naar de afgelopen trainingsweek");
 
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Account")[0].click();
 ok(text().includes("Ingelogd als") && text().includes("hessel"), "accountpagina");
+ok(text().includes("Trainingsprofiel") && text().includes("Geboortedatum") &&
+  text().includes("Hartslagzones aanpassen") && text().includes("Gebruikersnaam en wachtwoord"),
+  "account bevat bewerkbaar trainingsprofiel en inloggegevens");
+const accountForms = find(root.app, e => e.tagName === "FORM");
+await submit(accountForms[0]);
+ok(text().includes("Profiel opgeslagen en je huidige schema bijgewerkt."), "accountprofiel kan worden opgeslagen");
+const credentialForm = find(root.app, e => e.tagName === "FORM")[1];
+find(credentialForm, e => e.tagName === "INPUT" && e.attrs.type === "text")[0].value = "hessel2";
+find(credentialForm, e => e.tagName === "INPUT" && e.attrs.autocomplete === "current-password")[0].value = "een-lang-wachtwoord";
+await submit(credentialForm);
+ok(text().includes("hessel2") && text().includes("Accountgegevens opgeslagen."), "gebruikersnaam kan vanuit Account worden gewijzigd");
 console.log("\nRooktest geslaagd.");
 process.exit(0);

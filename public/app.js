@@ -5,7 +5,7 @@
 const DAGEN_KORT = ["Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"];
 const TYPE_LABEL = {
   rust: "Rust", duurrit: "Duurrit", tempo: "Tempo", drempel: "Drempel", vo2max: "VO2max", sprint: "Sprint",
-  kracht: "Kracht", techniek: "Techniek", herstelrit: "Herstelrit", race: "Wedstrijd"
+  kracht: "Kracht", techniek: "Techniek", herstelrit: "Herstelrit", race: "Wedstrijd", mtb: "MTB"
 };
 const FASE_LABEL = { basis: "Basis", opbouw: "Opbouw", piek: "Piek", afbouw: "Afbouw", herstel: "Herstel" };
 
@@ -77,6 +77,90 @@ function todayIso() {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }
 
+function defaultHrZones(threshold, maximum) {
+  const upper = [0.81, 0.89, 0.93, 0.99, 1.05].map(factor => Math.min(maximum - 1, Math.round(threshold * factor)));
+  upper.push(maximum);
+  for (let i = 4; i >= 0; i--) upper[i] = Math.min(upper[i], upper[i + 1] - 1);
+  for (let i = 0; i < 5; i++) upper[i] = Math.max(upper[i], i ? upper[i - 1] + 1 : 30);
+  return upper;
+}
+
+function defaultPowerZones(ftp) {
+  return [0.55, 0.75, 0.90, 1.05, 1.20, 1.50].map(factor => Math.round(ftp * factor));
+}
+
+function zoneEditor(title, unit, initial, calculate) {
+  const inputs = Array.from({ length: 6 }, (_, index) => h("input", {
+    type: "number", min: unit === "bpm" ? 30 : 20, max: unit === "bpm" ? 250 : 2000, step: 1,
+    name: `${unit === "bpm" ? "hr" : "power"}_z${index + 1}`, placeholder: "—",
+    value: initial?.[index] ?? ""
+  }));
+  const calculateButton = h("button", {
+    class: "btn ghost small", type: "button", text: "Zones uit drempel berekenen",
+    onclick: () => {
+      const values = calculate();
+      if (!values) return;
+      values.forEach((value, index) => { inputs[index].value = value; });
+    }
+  });
+  return {
+    element: h("details", { class: "zone-editor" },
+      h("summary", { text: `${title} aanpassen` }),
+      h("p", { class: "hint", text: `Vul desgewenst de bovengrens per zone in ${unit}. Leeg laten gebruikt de berekende standaardzones.` }),
+      h("div", { class: "zone-grid" }, ...inputs.map((input, index) => field(`Z${index + 1} tot`, input))),
+      calculateButton),
+    values: () => {
+      if (inputs.every(input => input.value === "")) return null;
+      return inputs.map(input => input.value === "" ? "" : Number(input.value));
+    }
+  };
+}
+
+function measurementSettings(initial, meter) {
+  const container = h("div", { class: "stack equipment-settings" });
+  const hrMax = h("input", { type: "number", name: "hr_max", min: 60, max: 240, step: 1, required: true, value: initial.hr_max ?? "" });
+  const hrThreshold = h("input", { type: "number", name: "hr_threshold", min: 60, max: 230, step: 1, required: true, value: initial.hr_threshold ?? "" });
+  const ftp = h("input", { type: "number", name: "ftp", min: 50, max: 1000, step: 1, required: true, value: initial.ftp ?? "" });
+  const hrEditor = zoneEditor("Hartslagzones", "bpm", initial.hr_zones, () =>
+    hrMax.value && hrThreshold.value ? defaultHrZones(Number(hrThreshold.value), Number(hrMax.value)) : null);
+  const powerEditor = zoneEditor("Vermogenszones", "W", initial.power_zones, () =>
+    ftp.value ? defaultPowerZones(Number(ftp.value)) : null);
+  const render = () => {
+    clear(container);
+    const usesHr = ["heart_rate", "both"].includes(meter.value);
+    const usesPower = ["power", "both"].includes(meter.value);
+    hrMax.required = usesHr;
+    hrThreshold.required = usesHr;
+    ftp.required = usesPower;
+    if (usesHr) {
+      container.append(
+        h("h3", { text: "Hartslaggegevens" }),
+        h("div", { class: "grid2" },
+          field("Maximale hartslag (bpm)", hrMax),
+          field("Drempelhartslag (bpm)", hrThreshold)),
+        hrEditor.element);
+    }
+    if (usesPower) {
+      container.append(
+        h("h3", { text: "Vermogensgegevens" }),
+        field("FTP / drempelvermogen (watt)", ftp),
+        powerEditor.element);
+    }
+  };
+  meter.addEventListener("change", render);
+  render();
+  return {
+    element: container,
+    values: () => ({
+      hr_max: hrMax.value ? Number(hrMax.value) : null,
+      hr_threshold: hrThreshold.value ? Number(hrThreshold.value) : null,
+      hr_zones: hrEditor?.values() || null,
+      ftp: ftp.value ? Number(ftp.value) : null,
+      power_zones: powerEditor?.values() || null
+    })
+  };
+}
+
 // Een knop die tijdens het wachten uitgeschakeld is en een melding toont
 function busyButton(button, message, statusEl) {
   button.disabled = true;
@@ -124,10 +208,14 @@ function renderNav(activePage = state.page) {
   if (state.data?.plan) coachLauncher.appendChild(h("button", {
     class: "coach-launcher-button",
     type: "button",
-    text: "Chat met je coach",
-    "aria-label": "Open de coachchat",
+    "aria-label": "Chat met je coach",
     onclick: viewCoach
-  }));
+  },
+    h("span", { class: "launcher-avatar", "aria-hidden": "true", text: "W" }),
+    h("span", { class: "launcher-copy" },
+      h("strong", { text: "Je wielercoach" }),
+      h("span", { text: "Stel een vraag" })),
+    h("span", { class: "launcher-arrow", "aria-hidden": "true", text: "↗" })));
 }
 
 // ---------- inloggen en registreren ----------
@@ -183,15 +271,20 @@ function viewIntake(prefill) {
   state.page = "plan";
   renderNav("plan");
   const p = prefill || {};
+  const savedProfile = state.profile || {};
   const error = h("p", { class: "error", role: "alert" });
   const status = h("p", { class: "muted", role: "status" });
 
   const doel = h("input", { type: "text", maxlength: 200, required: true, placeholder: "Bijvoorbeeld: toertocht van 120 km, of fitter worden", value: p.doel || "" });
+  const birthDate = h("input", {
+    type: "date", name: "geboortedatum", min: "1900-01-01", max: todayIso(), required: true,
+    value: savedProfile.birth_date || ""
+  });
   const datum = h("input", { type: "date", min: addDays(todayIso(), 7), value: p.datum || "" });
   const niveau = h("select", {}, ...[["beginner", "Beginner"], ["gevorderd", "Gevorderd"], ["ervaren", "Ervaren"], ["wedstrijd", "Wedstrijdrenner"]]
     .map(([v, t]) => h("option", { value: v, selected: (p.niveau || "gevorderd") === v, text: t })));
   const uren = h("input", { type: "number", min: 2, max: 25, step: 0.5, required: true, value: p.uren_per_week ?? 6 });
-  const defaultMeter = p.meter !== undefined ? p.meter : prefill ? "none" : "";
+  const defaultMeter = savedProfile.meter || p.meter || "";
   const meter = h("select", { required: true }, [
     ["", "Maak een keuze"],
     ["power", "Vermogensmeter"],
@@ -199,10 +292,10 @@ function viewIntake(prefill) {
     ["both", "Beide"],
     ["none", "Geen van beide"]
   ].map(([value, label]) => h("option", { value, selected: defaultMeter === value, text: label })));
+  const equipment = measurementSettings(savedProfile, meter);
   const dagenChecks = DAGEN_KORT.map((naam, i) => ({
     i, box: h("input", { type: "checkbox", checked: (p.dagen || [1, 3, 5, 6]).includes(i) }), naam
   }));
-  const ftp = h("input", { type: "number", min: 80, max: 600, placeholder: "Optioneel", value: p.ftp ?? "" });
   const jaren = h("input", { type: "number", min: 0, max: 60, placeholder: "Optioneel", value: p.ervaring_jaren ?? "" });
   const beperkingen = h("textarea", { rows: 2, maxlength: 300, placeholder: "Optioneel, bijvoorbeeld een oude blessure. Vul alleen in wat je kwijt wilt." }, p.beperkingen || "");
   const opmerkingen = h("textarea", { rows: 2, maxlength: 400, placeholder: "Optioneel, bijvoorbeeld: ik werk onregelmatig of train vooral buiten." }, p.opmerkingen || "");
@@ -213,7 +306,9 @@ function viewIntake(prefill) {
       doel: doel.value, datum: datum.value || null, niveau: niveau.value, uren_per_week: Number(uren.value),
       dagen: dagenChecks.filter(d => d.box.checked).map(d => d.i),
       meter: meter.value,
-      ftp: ftp.value ? Number(ftp.value) : null, ervaring_jaren: jaren.value ? Number(jaren.value) : null,
+      geboortedatum: birthDate.value,
+      ...equipment.values(),
+      ervaring_jaren: jaren.value ? Number(jaren.value) : null,
       beperkingen: beperkingen.value, opmerkingen: opmerkingen.value
     };
   }
@@ -235,12 +330,14 @@ function viewIntake(prefill) {
   },
   h("h2", { text: "Jouw doel en situatie" }),
   field("Wat is je doel?", doel),
+  field("Geboortedatum", birthDate, "Je leeftijd helpt de coach je schema af te stemmen. Alleen je leeftijd, niet je geboortedatum, wordt met de AI gedeeld."),
   field("Datum van je doel", datum, "Optioneel. Zonder datum maak ik een schema van 8 weken."),
   h("div", { class: "grid2" }, field("Niveau", niveau), field("Uren per week (maximaal)", uren)),
   field("Welke meetapparatuur gebruik je?", meter),
+  equipment.element,
   h("fieldset", { class: "days" }, h("legend", { text: "Op welke dagen kun je trainen?" }),
     ...dagenChecks.map(d => h("label", { class: "daybox" }, d.box, h("span", { text: d.naam })))),
-  h("div", { class: "grid2" }, field("FTP in watt", ftp, "Alleen invullen als je een vermogensmeter gebruikt."), field("Jaren ervaring", jaren)),
+  field("Jaren ervaring", jaren),
   field("Beperkingen of klachten", beperkingen),
   field("Overige opmerkingen", opmerkingen),
   h("p", { class: "tip", text: "Wil je je eerdere ritten gebruiken? Je kunt TrainingPeaks-gegevens importeren via de zijbalk." }),
@@ -437,68 +534,30 @@ function dayCard(plan, week, dag) {
     copyStatus);
 }
 
-function checkinForm(plan, week) {
-  const error = h("p", { class: "error", role: "alert" });
-  const status = h("p", { class: "muted", role: "status" });
-  const pct = h("select", {}, ...[[100, "Alles"], [75, "Ongeveer driekwart"], [50, "De helft"], [25, "Een kwart"], [0, "Bijna niets"]]
-    .map(([v, t]) => h("option", { value: v, text: t })));
-  const uren = h("input", { type: "number", min: 0, max: 40, step: 0.5, placeholder: "Optioneel" });
-  const gevoel = h("select", {}, ...[[1, "1. Heel zwaar of uitgeput"], [2, "2. Zwaar"], [3, "3. Prima"], [4, "4. Goed"], [5, "5. Heel goed"]]
-    .map(([v, t]) => h("option", { value: v, text: t, selected: v === 3 })));
-  const klachten = h("input", { type: "checkbox" });
-  const opmerking = h("textarea", { rows: 2, maxlength: 300, placeholder: "Optioneel: wat ging goed, wat niet?" });
-  const submit = h("button", { class: "btn", type: "submit", text: `Maak week ${week.week_no + 1}` });
-  return h("form", {
-    class: "card stack",
-    onsubmit: async (event) => {
-      event.preventDefault();
-      error.textContent = "";
-      const done = busyButton(submit);
-      status.textContent = "De coach past je volgende week aan…";
-      try {
-        const data = await api("POST", "/api/plan/checkin", {
-          week_no: week.week_no, gedaan_pct: Number(pct.value), uren_gedaan: uren.value ? Number(uren.value) : null,
-          gevoel: Number(gevoel.value), klachten: klachten.checked, opmerking: opmerking.value
-        });
-        state.data = data;
-        state.week = data.weeks[data.weeks.length - 1].week_no;
-        viewPlan();
-      } catch (e) { error.textContent = e.message; status.textContent = ""; done(); }
-    }
-  },
-  h("h3", { text: `Hoe ging week ${week.week_no}?` }),
-  h("p", { class: "muted", text: "Op basis hiervan maakt de coach de volgende week." }),
-  h("div", { class: "grid2" }, field("Hoeveel van het schema heb je gedaan?", pct), field("Uren getraind", uren)),
-  field("Hoe voelde de week?", gevoel),
-  h("label", { class: "check" }, klachten, h("span", { text: "Ik heb pijn, een blessure of ben ziek" })),
-  field("Opmerking", opmerking),
-  error, status, submit);
+function checkinIsDue(plan, week) {
+  return week.week_no < plan.total_weeks && !week.checkin &&
+    todayIso() >= addDays(plan.start_date, week.week_no * 7);
 }
 
-function coachChat(plan, weeks, currentWeek) {
-  const contextWeek = h("select", {}, ...weeks.map(item =>
-    h("option", { value: item.week_no, selected: item.week_no === currentWeek.week_no, text: `Week ${item.week_no}` })));
+function coachChat(plan, currentWeek) {
   const defaultDay = currentWeek.dagen.find(item => plan.intake.dagen.includes(item.dag) && item.type !== "rust")?.dag ?? plan.intake.dagen[0];
-  const day = h("select", {}, ...plan.intake.dagen.map(index =>
-    h("option", { value: index, selected: index === defaultDay, text: DAGEN_KORT[index] })));
+  const checkinDue = checkinIsDue(plan, currentWeek);
   const messages = h("div", { class: "chat", "aria-live": "polite", "aria-relevant": "additions text" });
   const error = h("p", { class: "error", role: "alert" });
   const status = h("p", { class: "muted", role: "status" });
-  const input = h("textarea", { id: "coach-input", rows: 3, maxlength: 1000, required: true, placeholder: "Vraag iets over je schema, training of herstel…" });
-  const submit = h("button", { class: "btn", type: "submit", text: "Stuur naar de coach" });
+  const input = h("textarea", { id: "coach-input", rows: 2, maxlength: 1000, required: true, placeholder: "Typ een bericht…" });
+  const submit = h("button", { class: "chat-send", type: "submit", "aria-label": "Verstuur bericht", text: "➤" });
   let loadId = 0;
   let conversation = [];
   const renderMessages = (items, thinking = false) => {
     clear(messages);
-    if (!items.length && !thinking) messages.appendChild(h("div", { class: "chat-empty" },
+    if (!items.length && !thinking && !checkinDue) messages.appendChild(h("div", { class: "chat-empty" },
       h("span", { class: "coach-avatar", "aria-hidden": "true", text: "W" }),
-      h("p", { text: "Hoi! Ik ben je wielercoach. Vraag me iets over je schema, je trainingen of hoe je je voelt." }),
-      h("p", { class: "hint", text: "Dit is één doorlopend gesprek. Kies een training als context wanneer je die wilt bespreken of aanpassen." })));
+      h("p", { text: "Hoi! Ik ben je wielercoach. Vraag me iets over je schema, trainingen of herstel." }),
+      h("p", { class: "hint", text: "Je kunt in je eigen woorden vragen om iets aan je schema toe te voegen of te veranderen." })));
     for (const item of items) {
       messages.appendChild(h("div", { class: `chat-message ${item.role === "assistant" ? "coach" : "user"}` },
-        h("div", { class: "chat-meta" },
-          h("span", { class: "chat-label", text: item.role === "assistant" ? "WielerSchema-coach" : "Jij" }),
-          item.week_no ? h("span", { class: "chat-context", text: `Week ${item.week_no} · ${DAGEN_KORT[item.day_no] || ""}` }) : null),
+        h("span", { class: "chat-label", text: item.role === "assistant" ? "WielerSchema-coach" : "Jij" }),
         h("p", { class: "chat-bubble", text: item.content }),
         item.updated ? h("span", { class: "hint", text: "Training bijgewerkt" }) : null,
         item.suggestion ? h("section", { class: "suggestion-card" },
@@ -511,6 +570,9 @@ function coachChat(plan, weeks, currentWeek) {
               h("button", { class: "btn ghost small", type: "button", text: "Niet toepassen", onclick: () => resolveSuggestion(item.suggestion.id, "dismiss") }))
             : h("p", { class: "hint", text: item.suggestion.status === "applied" ? "Training aangepast" : "Voorstel niet toegepast" })) : null));
     }
+    if (checkinDue && !thinking) messages.appendChild(h("div", { class: "chat-message coach" },
+      h("span", { class: "chat-label", text: "WielerSchema-coach" }),
+      h("p", { class: "chat-bubble checkin-bubble", text: `Hoe ging week ${currentWeek.week_no}? Heb je kunnen trainen, en hoe voelde het? Vertel het gewoon in je eigen woorden; dan maak ik je volgende week passend.` })));
     if (thinking) messages.appendChild(h("div", { class: "chat-message coach", role: "status" },
       h("span", { class: "chat-label", text: "WielerSchema-coach" }),
       h("div", { class: "chat-bubble typing" },
@@ -556,44 +618,40 @@ function coachChat(plan, weeks, currentWeek) {
       if (!bericht) return;
       error.textContent = "";
       submit.disabled = true;
-      submit.textContent = "De coach denkt na…";
+      submit.textContent = "…";
       const startedAt = Date.now();
       renderMessages([...conversation, {
-        role: "user", content: bericht, week_no: Number(contextWeek.value), day_no: Number(day.value)
+        role: "user", content: bericht
       }], true);
       status.textContent = "Je bericht wordt verwerkt. Dit kan even duren…";
       try {
-        await api("POST", "/api/coach/chat", {
-          week_no: Number(contextWeek.value), day_no: Number(day.value), bericht, global: true
+        const reply = await api("POST", "/api/coach/chat", {
+          week_no: currentWeek.week_no, day_no: defaultDay, bericht, global: true
         });
         const remaining = 800 - (Date.now() - startedAt);
         if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
         input.value = "";
         state.data = await api("GET", "/api/plan");
         state.wellness = (await api("GET", "/api/wellness")).entries;
-        state.week = Number(contextWeek.value);
+        state.week = state.data.weeks[state.data.weeks.length - 1].week_no;
+        if (reply.plan_updated) status.textContent = "Je volgende trainingsweek staat klaar.";
         viewCoach();
       } catch (e) {
         error.textContent = e.message;
         submit.disabled = false;
-        submit.textContent = "Stuur naar de coach";
+        submit.textContent = "➤";
         renderMessages(conversation);
         status.textContent = "";
       }
     }
   },
-  h("div", { class: "grid2 coach-context" },
-    field("Week als context", contextWeek),
-    field("Training als context", day)),
-  h("p", { class: "hint", text: "Stel gerust een algemene vraag. Wil je iets aanpassen? Kies dan hierboven de training; alleen die training kan worden gewijzigd." }),
   messages,
   h("div", { class: "quick-prompts", "aria-label": "Voorbeeldvragen" },
     ...["Leg deze training uit", "Maak deze training lichter"].map(text =>
       h("button", { class: "prompt-chip", type: "button", text, onclick: () => { input.value = `${text}.`; input.focus(); } }))),
-  field("Bericht aan de coach", input),
-  h("p", { class: "hint", text: "De coach past geen andere trainingen aan. Voor TrainingPeaks kun je per workout een prompt kopiëren." }),
-  error, status, h("div", { class: "row between coach-submit-row" },
-    h("span", { class: "hint", text: "Je chat wordt bewaard bij je schema." }), submit));
+  h("div", { class: "chat-composer" }, input, submit),
+  h("p", { class: "hint", text: "Je berichten worden bewaard. Als je vraagt iets te plannen, zet de coach dat direct in je schema." }),
+  error, status);
   loadThread();
   return h("section", { id: "coach-chat", class: "card stack coach-panel", "aria-labelledby": "coach-chat-title" },
     h("div", { class: "coach-heading" },
@@ -609,13 +667,14 @@ function viewCoach() {
   state.page = "coach";
   renderNav("coach");
   if (!state.data?.plan) return viewIntake();
-  const week = state.data.weeks.find(item => item.week_no === state.week) || state.data.weeks[state.data.weeks.length - 1];
+  const week = state.data.weeks[state.data.weeks.length - 1];
+  state.week = week.week_no;
   show(
     h("div", { class: "page-heading" },
       h("p", { class: "eyebrow", text: "PERSOONLIJKE BEGELEIDING" }),
       h("h1", { text: "Coach" }),
       h("p", { class: "muted", text: "Eén doorlopend gesprek. De coach ziet je schema en je meest recente dagelijkse meetwaarden." })),
-    coachChat(state.data.plan, state.data.weeks, week)
+    coachChat(state.data.plan, week)
   );
 }
 
@@ -666,7 +725,11 @@ function viewPlan() {
       h("div", { class: "days-grid" }, ...week.dagen.map(d => dayCard(plan, week, d))),
       h("p", { class: "muted", text: "De prompt wordt naar je klembord gekopieerd; plak hem daarna in TrainingPeaks AI. De hartslagdoelen gebruiken je daar ingestelde zones; er worden geen bpm-waarden verzonnen." }),
       week.tips ? h("p", { class: "tip", text: "Tip: " + week.tips }) : null),
-    isLast && !finished ? checkinForm(plan, week) : null,
+    isLast && !finished && checkinIsDue(plan, week) ? h("section", { class: "card stack week-checkin-prompt" },
+      h("p", { class: "eyebrow", text: "WEEKTERUGBLIK" }),
+      h("h3", { text: `Hoe ging week ${week.week_no}?` }),
+      h("p", { class: "muted", text: "Vertel je coach in de chat wat je hebt getraind en hoe het voelde. Dan maakt die je volgende week." }),
+      h("button", { class: "btn", type: "button", text: "Vertel het aan je coach", onclick: viewCoach })) : null,
     h("section", { class: "card stack daily-metrics-promo" },
       h("h2", { text: "Hoe herstel je?" }),
       h("p", { class: "muted", text: "Vul je slaap, rusthartslag of Garmin Body Battery in. Je coach kan die gegevens meenemen in het gesprek." }),
@@ -823,28 +886,105 @@ function viewAnalytics() {
 function viewAccount() {
   state.page = "account";
   renderNav("account");
-  const error = h("p", { class: "error", role: "alert" });
-  const password = h("input", { type: "password", autocomplete: "current-password", required: true });
-  const submit = h("button", { class: "btn danger", type: "submit", text: "Account en gegevens verwijderen" });
+  const profile = state.profile || { birth_date: "", meter: "none" };
+  const profileError = h("p", { class: "error", role: "alert" });
+  const profileStatus = h("p", { class: "muted", role: "status" });
+  const birthDate = h("input", {
+    type: "date", min: "1900-01-01", max: todayIso(), required: true, value: profile.birth_date || ""
+  });
+  const meter = h("select", {}, [
+    ["power", "Vermogensmeter"], ["heart_rate", "Hartslagmeter"],
+    ["both", "Beide"], ["none", "Geen van beide"]
+  ].map(([value, label]) => h("option", { value, selected: (profile.meter || "none") === value, text: label })));
+  const equipment = measurementSettings(profile, meter);
+  const saveProfile = h("button", { class: "btn", type: "submit", text: "Profiel opslaan" });
+  const username = h("input", { type: "text", required: true, minlength: 3, maxlength: 30, autocapitalize: "none", value: state.user });
+  const currentPassword = h("input", { type: "password", autocomplete: "current-password", required: true });
+  const newPassword = h("input", { type: "password", autocomplete: "new-password", minlength: 10, maxlength: 200 });
+  const credentialsError = h("p", { class: "error", role: "alert" });
+  const credentialsStatus = h("p", { class: "muted", role: "status" });
+  const saveCredentials = h("button", { class: "btn", type: "submit", text: "Accountgegevens opslaan" });
+  const deleteError = h("p", { class: "error", role: "alert" });
+  const deletePassword = h("input", { type: "password", autocomplete: "current-password", required: true });
+  const deleteSubmit = h("button", { class: "btn danger", type: "submit", text: "Account en gegevens verwijderen" });
+  const loggedInName = h("strong", { text: state.user });
   show(
     h("h1", { text: "Account" }),
     h("section", { class: "card stack" },
-      h("p", {}, "Ingelogd als ", h("strong", { text: state.user })),
+      h("p", {}, "Ingelogd als ", loggedInName),
       h("p", {}, h("a", { class: "btn ghost", href: "/api/account/export", download: "wielerschema-gegevens.json", text: "Download mijn gegevens (JSON)" }))),
+    h("form", {
+      class: "card stack",
+      onsubmit: async event => {
+        event.preventDefault();
+        profileError.textContent = "";
+        profileStatus.textContent = "Profiel opslaan…";
+        saveProfile.disabled = true;
+        try {
+          const result = await api("POST", "/api/account/profile", {
+            profile: { geboortedatum: birthDate.value, meter: meter.value, ...equipment.values() }
+          });
+          state.profile = result.profile;
+          if (result.plan_updated) state.data = await api("GET", "/api/plan");
+          profileStatus.textContent = result.plan_updated ? "Profiel opgeslagen en je huidige schema bijgewerkt." : "Profiel opgeslagen.";
+        } catch (error) {
+          profileError.textContent = error.message;
+          profileStatus.textContent = "";
+        } finally {
+          saveProfile.disabled = false;
+        }
+      }
+    },
+    h("h2", { text: "Trainingsprofiel" }),
+    h("p", { class: "muted", text: "Pas je geboortedatum en meetapparatuur aan. Alleen je leeftijd wordt gebruikt bij de AI-coach." }),
+    field("Geboortedatum", birthDate),
+    field("Welke meetapparatuur gebruik je?", meter),
+    equipment.element,
+    profileError, profileStatus, saveProfile),
+    h("form", {
+      class: "card stack",
+      onsubmit: async event => {
+        event.preventDefault();
+        credentialsError.textContent = "";
+        credentialsStatus.textContent = "";
+        const done = busyButton(saveCredentials);
+        try {
+          const result = await api("POST", "/api/account/credentials", {
+            username: username.value, current_password: currentPassword.value, new_password: newPassword.value
+          });
+          state.user = result.username;
+          username.value = result.username;
+          loggedInName.textContent = result.username;
+          renderNav("account");
+          currentPassword.value = "";
+          newPassword.value = "";
+          credentialsStatus.textContent = "Accountgegevens opgeslagen.";
+        } catch (error) {
+          credentialsError.textContent = error.message;
+        } finally {
+          done();
+        }
+      }
+    },
+    h("h2", { text: "Gebruikersnaam en wachtwoord" }),
+    field("Inloggebruikersnaam", username),
+    field("Huidig wachtwoord (verplicht om wijzigingen op te slaan)", currentPassword),
+    field("Nieuw wachtwoord (optioneel, minstens 10 tekens)", newPassword),
+    credentialsError, credentialsStatus, saveCredentials),
     h("form", {
       class: "card stack",
       onsubmit: async (event) => {
         event.preventDefault();
-        error.textContent = "";
+        deleteError.textContent = "";
         if (!confirm("Weet je het zeker? Dit verwijdert je account en je schema definitief.")) return;
-        const done = busyButton(submit);
-        try { await api("POST", "/api/account/delete", { password: password.value }); state.user = null; state.data = null; start(); }
-        catch (e) { error.textContent = e.message; done(); }
+        const done = busyButton(deleteSubmit);
+        try { await api("POST", "/api/account/delete", { password: deletePassword.value }); state.user = null; state.data = null; start(); }
+        catch (e) { deleteError.textContent = e.message; done(); }
       }
     },
     h("h2", { text: "Account verwijderen" }),
     h("p", { class: "muted", text: "Dit verwijdert je account, schema, chat, TrainingPeaks-samenvatting en dagelijkse metingen. Dat kan niet ongedaan worden gemaakt." }),
-    field("Wachtwoord ter bevestiging", password), error, submit)
+    field("Wachtwoord ter bevestiging", deletePassword), deleteError, deleteSubmit)
   );
 }
 
@@ -858,6 +998,7 @@ async function start() {
     state.data = await api("GET", "/api/plan");
     state.training = (await api("GET", "/api/trainingpeaks")).summary;
     state.wellness = (await api("GET", "/api/wellness")).entries;
+    state.profile = (await api("GET", "/api/account/profile")).profile;
     if (state.data.plan) {
       state.week = state.data.weeks[state.data.weeks.length - 1].week_no;
       state.page = "plan";
