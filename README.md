@@ -12,11 +12,12 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 - Jeugdrenners van 12–17 krijgen terughoudender coachinstructies en een zichtbare oproep om een ouder/verzorger en jeugdtrainer mee te laten kijken.
 - Intake: doel, datum, niveau, uren per week, beschikbare dagen, ervaring en beperkingen. Een geboortedatum is verplicht; alleen de berekende leeftijd gaat naar Groq.
 - Keuze uit vermogensmeter, hartslagmeter, beide of geen van beide. Voor hartslagtraining vul je maximale en drempelhartslag in; voor vermogen je FTP. Per gekozen meetmethode kun je de zes zonegrenzen aanpassen. De voorgestelde startzones zijn schattingen op basis van gangbare percentages, geen medisch advies of vervanging van een test.
-- TrainingPeaks-exporten (ZIP met FIT/CSV) importeren; gegevens ouder dan 365 dagen worden genegeerd. Alleen weektotalen en meetwaardegemiddelden worden bewaard; de ruwe bestanden niet.
+- Recente activiteiten bekijken in een aparte tab. TrainingPeaks-exporten (ZIP met FIT/CSV) zijn een optionele manier om activiteiten te importeren; gegevens ouder dan 365 dagen worden genegeerd. Maximaal 100 activiteitssamenvattingen en weektotalen worden bewaard; de ruwe bestanden niet.
 - AI stelt maximaal 5 vervolgvragen in een chatweergave, maakt een overzicht van alle weken en werkt week 1 uit.
 - Eén doorlopende, WhatsApp-achtige chat met de coach; de coach gebruikt je schema zonder dat je week of dag hoeft te kiezen.
 - Pas trainingsdagen ook zelf aan: trainingstype, duur, zone, titel en beschrijving. Handmatige wijzigingen worden direct opgeslagen; de weeklimiet en gezondheidswaarschuwingen blijven gelden.
-- Kopieer per workout een TrainingPeaks AI-prompt met passende hartslag-, vermogens- of RPE-doelen. Dit is geen automatische koppeling met TrainingPeaks.
+- Open een trainingsdag voor details en handmatig aanpassen. De TrainingPeaks AI-prompt staat als optionele actie in dat venster; dit is geen automatische koppeling.
+- Vraag vanuit Activiteiten de coach om een reflectie op recente geïmporteerde ritten. Die activiteitssamenvattingen worden dan als context meegestuurd.
 - Na afloop vraagt de coach in de chat hoe je week ging; op basis van je antwoord maakt die de volgende week.
 - Dashboard met analyse van geïmporteerde trainingsweken en handmatige dagelijkse herstelmetingen (rusthartslag, slaap, Body Battery, stress en HRV; maximaal één jaar terug).
 - De coach kan mogelijke veranderingen in herstelwaarden bespreken, maar stelt geen medische diagnose. Elke voorgestelde wijziging aan een training verschijnt eerst ter beoordeling en wordt pas na bevestiging toegepast.
@@ -24,7 +25,7 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 - Onder Account kun je je geboortedatum, meetapparatuur en trainingszones aanpassen, je gebruikersnaam of wachtwoord wijzigen, je gegevens downloaden en je account verwijderen.
 - Privacyverklaring.
 
-Nog niet: wachtwoord vergeten (er is geen e-mail), automatische koppeling met Garmin of TrainingPeaks. Ritten kun je wel handmatig via TrainingPeaks-exportbestanden importeren.
+Nog niet: wachtwoord vergeten (er is geen e-mail), automatische koppelingen met Strava, Garmin, Wahoo of TrainingPeaks. Activiteiten kun je optioneel handmatig via TrainingPeaks-exportbestanden importeren.
 
 ## Veiligheid en vangrails
 
@@ -33,7 +34,7 @@ Nog niet: wachtwoord vergeten (er is geen e-mail), automatische koppeling met Ga
 - Wachtwoorden worden met PBKDF2 versleuteld, sessies zitten in een beveiligde cookie, schrijfacties van andere websites worden geweigerd, en er zijn limieten voor registreren, inloggen en AI-gebruik per gebruiker en per dag.
 - Voor ontwikkelaars kan `AI_UNLIMITED_USER_IDS` in Cloudflare een komma-gescheiden lijst met account-ID's bevatten; die accounts vallen niet onder de limiet per gebruiker. De gezamenlijke AI-noodlimiet blijft gelden.
 - IP-adressen worden nooit zelf opgeslagen, alleen een dagelijks wisselende hash voor de limieten.
-- ZIP-uploads zijn beperkt tot 20 MB en worden alleen in het geheugen verwerkt. Geïmporteerde samenvattingen kunnen eigen meetwaarden bevatten en worden, net als de intake, naar Groq gestuurd om het schema te maken.
+- ZIP-uploads zijn beperkt tot 20 MB en worden alleen in het geheugen verwerkt. Geïmporteerde week- en activiteitssamenvattingen kunnen eigen meetwaarden bevatten; de nieuwste activiteiten worden ook aan Groq meegestuurd als context bij coachgesprekken.
 - Coachberichten worden bewaard (maximaal 100 per account). De chat gebruikt recente berichten als gesprekscontext; de server controleert elke voorgestelde aanpassing voordat die wordt opgeslagen.
 - Dagmetingen zijn handmatige invoer, geen Garmin-koppeling. De 14 meest recente metingen kunnen als context met Groq worden gedeeld wanneer je de coach gebruikt; metingen worden in je account bewaard totdat je het account verwijdert en zijn beschikbaar in je gegevensdownload.
 - De opgegeven leeftijd wordt bij de intake gevalideerd; de coach krijgt voor sporters jonger dan 18 extra, voorzichtige instructies. De openbare inzet voor minderjarigen en de privacy-/toestemmingseisen moeten vóór lancering apart juridisch worden beoordeeld; deze versie vraagt geen afzonderlijke ouderbevestiging.
@@ -77,6 +78,5 @@ node test/frontend-smoke.mjs   # rooktest van de website
 
 ## Mogelijke vervolgstappen
 
-- Garmin Connect Developer Program aanvragen (gratis, alleen zakelijk) voor schema's naar het apparaat en ritten terug.
-- Ritten inlezen via een .fit-bestand, zodat de coach echte data gebruikt.
+- Officiële Strava-, Garmin- of Wahoo-koppelingen onderzoeken zodra toegang en API-voorwaarden duidelijk zijn.
 - Plan voor meer dan één doel, of een weekoverzicht per e-mail.

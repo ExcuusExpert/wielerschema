@@ -526,7 +526,7 @@ test("TrainingPeaks-import verwerkt ZIP/CSV, beperkt tot een jaar en bewaart all
   const cookie = await signup(env);
   const today = new Date().toISOString().slice(0, 10);
   const old = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
-  const summaryCsv = `Date,Duration,Distance,Average Power,Average Heart Rate\n${today},3600,25000,200,140\n${old},3600,25000,200,140\n`;
+  const summaryCsv = `Date,Duration,Distance,Average Power,Average Heart Rate,Activity Name,Sport\n${today},3600,25000,200,140,Clubrit,Fietsen\n${old},3600,25000,200,140,Oude rit,Fietsen\n`;
   const metricsCsv = `Date,Weight,Sleep\n${today},75.5,8\n`;
   const form = new FormData();
   form.append("summary", new File([zipSync({ "workouts.csv": strToU8(summaryCsv) })], "summary.zip"));
@@ -545,6 +545,9 @@ test("TrainingPeaks-import verwerkt ZIP/CSV, beperkt tot een jaar en bewaart all
   assert.equal(imported.summary.weeks[0].hours, 1);
   assert.equal(imported.summary.weeks[0].avg_power, 200);
   assert.deepEqual(imported.summary.weeks[0].metrics, { Weight: 75.5, Sleep: 8 });
+  assert.equal(imported.summary.recent_activities.length, 1);
+  assert.equal(imported.summary.recent_activities[0].name, "Clubrit");
+  assert.equal(imported.summary.recent_activities[0].sport, "cycling");
   const updateForm = new FormData();
   updateForm.append("metrics", new File([zipSync({ "metrics.csv": strToU8(`Date,Weight\n${today},76\n`) })], "metrics.zip"));
   updateForm.append("ai_consent", "yes");
@@ -561,6 +564,8 @@ test("TrainingPeaks-import verwerkt ZIP/CSV, beperkt tot een jaar en bewaart all
   const savedSummary = (await api(env, "GET", "/api/trainingpeaks", undefined, { cookie })).data.summary;
   assert.deepEqual(savedSummary.weeks, merged.summary.weeks);
   assert.equal(savedSummary.activities, 1);
+  assert.equal(savedSummary.recent_activities.length, 1);
+  assert.equal(savedSummary.recent_activities[0].name, "Clubrit");
   const otherCookie = await signup(env, "anders");
   assert.equal((await api(env, "GET", "/api/trainingpeaks", undefined, { cookie: otherCookie })).data.summary, null);
   const plan = await api(env, "POST", "/api/plan/create", { intake: { ...INTAKE, meter: "both", hr_max: 190, hr_threshold: 170 } }, { cookie });
@@ -568,6 +573,12 @@ test("TrainingPeaks-import verwerkt ZIP/CSV, beperkt tot een jaar en bewaart all
   assert.equal(plan.data.plan.intake.meter, "both");
   assert.match(lastGroqPrompt, /"avg_power":200/);
   assert.match(lastGroqPrompt, /"Weight":76/);
+  const reflection = await api(env, "POST", "/api/coach/chat", {
+    week_no: 1, day_no: 0, bericht: "Kun je mijn recente ritten bekijken?", global: true
+  }, { cookie });
+  assert.equal(reflection.status, 200);
+  assert.ok(lastGroqPrompt.includes("<recente_activiteiten>"));
+  assert.ok(lastGroqPrompt.includes("Clubrit"));
 });
 
 test("TrainingPeaks-import vereist inloggen en ZIP-bestanden", async () => {

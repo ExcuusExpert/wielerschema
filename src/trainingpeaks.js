@@ -110,6 +110,8 @@ function parseWorkoutCsv(bytes, cutoff, now) {
   const distanceCol = columnIndex(headers, ["distancekm", "totaldistance", "distance"]);
   const powerCol = columnIndex(headers, ["averagepower", "avgpower", "normalizedpower", "avgwatts"]);
   const heartCol = columnIndex(headers, ["averageheartrate", "avgheartrate", "averagehr", "avghr"]);
+  const nameCol = columnIndex(headers, ["activityname", "workoutname", "workouttitle", "activitytitle", "title", "name"]);
+  const sportCol = columnIndex(headers, ["sport", "sporttype", "activitytype", "workouttype"]);
   const activities = [];
   for (const row of rows.slice(1)) {
     const date = dateValue(row[dateCol]);
@@ -122,6 +124,8 @@ function parseWorkoutCsv(bytes, cutoff, now) {
         : distanceHeader.includes("km") || rawDistance < 1000 ? rawDistance : rawDistance / 1000;
     activities.push({
       date: date.toISOString().slice(0, 10),
+      name: nameCol < 0 ? "" : String(row[nameCol] || "").replace(/[\u0000-\u001f\u007f<>]/g, " ").trim().slice(0, 80),
+      sport: sportCol < 0 ? "cycling" : normalizeSport(row[sportCol]),
       minutes: Math.min(1440, Math.max(0, duration)),
       distance_km: Math.min(1000, Math.max(0, distance)),
       power: powerCol < 0 ? null : numberValue(row[powerCol]),
@@ -129,6 +133,15 @@ function parseWorkoutCsv(bytes, cutoff, now) {
     });
   }
   return activities;
+}
+
+function normalizeSport(value) {
+  const sport = normalized(value);
+  if (/run|lopen|hardlopen/.test(sport)) return "running";
+  if (/swim|zwem/.test(sport)) return "swimming";
+  if (/ski|skate|schaats/.test(sport)) return "skating";
+  if (/bike|cycl|fiets|mtb|ride/.test(sport)) return "cycling";
+  return "other";
 }
 
 function parseMetricsCsv(bytes, cutoff, now) {
@@ -254,6 +267,8 @@ export async function parseTrainingPeaks(files, now = new Date()) {
         if (!date || date < cutoff || date > now) continue;
         activities.push({
           date: date.toISOString().slice(0, 10),
+          name: "",
+          sport: normalizeSport(session.sport),
           minutes: Math.min(1440, Math.max(0, Number(session.total_timer_time || session.total_elapsed_time || 0) / 60)),
           distance_km: Math.min(1000, Math.max(0, Number(session.total_distance || 0) / 1000)),
           power: Number(session.avg_power) || null,
@@ -318,6 +333,7 @@ export async function parseTrainingPeaks(files, now = new Date()) {
     period_start: cutoff.toISOString().slice(0, 10),
     period_end: now.toISOString().slice(0, 10),
     activities: summaries.reduce((total, week) => total + week.rides, 0),
+    recent_activities: activities,
     metric_names: [...metricNames].sort(),
     weeks: summaries.slice(-52)
   };

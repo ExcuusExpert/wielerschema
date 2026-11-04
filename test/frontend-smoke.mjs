@@ -89,7 +89,7 @@ vm.createContext(sandbox);
 
 const tick = () => new Promise(r => setTimeout(r, 80));
 const text = () => root.app.textContent;
-const ok = (cond, msg) => { if (!cond) { console.error("MISLUKT:", msg, "\nScherm:", text().slice(0, 300)); process.exit(1); } console.log("ok:", msg); };
+const ok = (cond, msg) => { if (!cond) { console.error("MISLUKT:", msg, "\nScherm:", text().slice(0, 1000)); process.exit(1); } console.log("ok:", msg); };
 const submit = async (form) => { for (const fn of form.listeners.submit || []) await fn({ preventDefault() {} }); await tick(); await tick(); };
 const youthBirthDate = new Date();
 youthBirthDate.setUTCFullYear(youthBirthDate.getUTCFullYear() - 17);
@@ -146,13 +146,20 @@ await submit(find(root.app, e => e.tagName === "FORM")[0]);
 ok(text().includes("Toertocht van 120 km") && text().includes("Week 1") && text().includes("Rustige opbouw"), "schema getoond met week 1");
 ok(text().includes("Jeugdrenner: train met begeleiding"), "jeugdrenner krijgt een blijvende begeleidingsmelding bij het schema");
 ok(find(root.app, e => e.className.includes("day")).length >= 7, "zeven dagkaarten");
+ok(find(root.app, e => e.className.includes("week-visual-day")).length === 7, "week heeft een visueel overzicht van alle zeven dagen");
 ok(!text().includes("Hoeveel van het schema heb je gedaan?"), "oude weekcheck-in met formulier is verwijderd");
-ok(text().includes("Dagmetingen en analyse bekijken") && text().includes("Kopieer prompt voor TrainingPeaks AI"), "herstelmetingen en TrainingPeaks-workoutprompt zichtbaar");
-find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer prompt voor TrainingPeaks AI")[0].click();
+ok(text().includes("Dagmetingen en analyse bekijken") && !text().includes("Kopieer trainingsprompt"), "TrainingPeaks-prompt is niet prominent in het weekschema");
+const planData = await (await sandbox.fetch("/api/plan")).json();
+const dayToEdit = planData.plan.intake.dagen[0];
+const dayButton = find(root.app, e => e.className.includes("week-visual-day"))[dayToEdit];
+dayButton.click();
+ok(find(root.app, e => e.attrs.role === "dialog").length === 1 && text().includes("Training aanpassen"),
+  "op een dag klikken opent een detailvenster");
+ok(text().includes("Optioneel: gebruiken in TrainingPeaks AI"), "TrainingPeaks-prompt zit achter een optionele uitklapper");
+find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer trainingsprompt")[0].click();
 await tick();
 ok(sandbox.copiedText.includes("Build Intervals By: Duration") && sandbox.copiedText.includes("Intensity: Heart Rate") && sandbox.copiedText.includes("hartslagzones"), "TrainingPeaks-prompt gebruikt hartslagzones en workoutduur");
-const editButton = find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Handmatig aanpassen")[0];
-editButton.click();
+find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Training aanpassen")[0].click();
 const editForm = find(root.app, e => e.tagName === "FORM" && e.className.includes("workout-editor"))[0];
 find(editForm, e => e.tagName === "INPUT" && e.attrs.type === "number")[0].value = "70";
 find(editForm, e => e.tagName === "INPUT" && e.attrs.type === "text")[0].value = "Handmatige duurrit";
@@ -161,8 +168,9 @@ const zoneSelect = find(editForm, e => e.tagName === "SELECT")[1];
 for (const option of zoneSelect.children) delete option.attrs.selected;
 zoneSelect.children.find(option => option.attrs.value === "Z1").attrs.selected = "";
 await submit(editForm);
-ok(text().includes("Handmatige duurrit") && text().includes("70 min"), "training handmatig aanpassen slaat wijzigingen in het schema op");
-find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer prompt voor TrainingPeaks AI")[0].click();
+ok(text().includes("Handmatige duurrit") && text().includes("1 u 10 min"), "training handmatig aanpassen slaat wijzigingen in het schema op");
+find(root.app, e => e.className.includes("week-visual-day"))[dayToEdit].click();
+find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer trainingsprompt")[0].click();
 await tick();
 ok(sandbox.copiedText.includes("Duration: 70 minuten") &&
   sandbox.copiedText.includes("Target: Z1 volgens mijn ingestelde hartslagzones, 70 minuten rustig, RPE 3.") &&
@@ -174,6 +182,13 @@ ok(text().includes("Dagmetingen toevoegen") && text().includes("Body Battery hoo
 find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "resting_hr")[0].value = "52";
 await submit(find(root.app, e => e.tagName === "FORM")[0]);
 ok(text().includes("Recente dagmetingen") && text().includes("52 bpm"), "dagmeting kan worden opgeslagen en getoond");
+
+vm.runInContext('state.training = { recent_activities: [{ date: "2026-10-25", name: "Zondagrit", sport: "cycling", minutes: 95, distance_km: 42, power: 185, heart_rate: 144, source: "csv" }], weeks: [] }', sandbox);
+find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Activiteiten")[0].click();
+ok(text().includes("Recente activiteiten") && text().includes("Zondagrit") && text().includes("42.0 km"), "activiteiten-tab toont recente trainingen");
+ok(text().includes("Strava-koppeling") && text().includes("Nog niet beschikbaar"), "Strava staat eerlijk als toekomstige koppeling aangegeven");
+find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Bespreek mijn activiteiten met de coach")[0].click();
+ok(find(root.app, e => e.tagName === "TEXTAREA" && e.attrs.id === "coach-input")[0].value.includes("recente activiteiten"), "activiteitentab opent chat met een reflectievraag klaar");
 
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Coach")[0].click();
 await tick();
