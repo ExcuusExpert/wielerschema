@@ -335,17 +335,53 @@ function downloadIcs(plan, week) {
   a.remove();
 }
 
+function trainingPeaksPrompt(plan, dag) {
+  const meter = plan.intake.meter;
+  const intensity = meter === "heart_rate" ? "Heart Rate (gebruik mijn ingestelde hartslagzones)"
+    : meter === "both" ? "Heart Rate als primair doel; gebruik vermogen alleen als dit bij de training staat"
+      : meter === "power" && plan.intake.ftp ? `percentOfFtp (FTP ${plan.intake.ftp} W)`
+        : "RPE/gevoel (geen meterdoel verzinnen)";
+  const zoneTarget = meter === "power" ? "mijn ingestelde vermogenszones"
+    : ["heart_rate", "both"].includes(meter) ? "mijn ingestelde hartslagzones"
+      : "de genoemde trainingszone en RPE";
+  const target = dag.zone ? `${dag.zone} volgens ${zoneTarget}, ${dag.beschrijving}` : dag.beschrijving;
+  return [
+    "Maak hiervan een gestructureerde wielertraining in TrainingPeaks.",
+    "Sport Type: Bike",
+    `Intensity: ${intensity}`,
+    "Build Intervals By: Duration",
+    "Block Type: warming-up, hoofdset, herstelblokken en cooling-down waar passend",
+    `Duration: ${dag.minuten} minuten`,
+    `Target: ${target || "rustig, RPE 3-4/10"}`,
+    `Training: ${dag.titel}. ${dag.beschrijving}`,
+    "Behoud de totale duur en de genoemde intervallen. Verzin geen FTP, wattages of hartslag in bpm."
+  ].join("\n");
+}
+
 function dayCard(plan, week, dag) {
   const date = addDays(plan.start_date, (week.week_no - 1) * 7 + dag.dag);
   if (dag.type === "rust") {
     return h("article", { class: "day rest" }, h("h4", { text: `${DAGEN_KORT[dag.dag]} ${dateLabel(date).split(" ").slice(1).join(" ")}` }), h("p", { class: "muted", text: "Rust" }));
   }
+  const copyStatus = h("span", { class: "hint", role: "status" });
   return h("article", { class: `day t-${dag.type}` },
     h("h4", { text: `${DAGEN_KORT[dag.dag]} ${dateLabel(date).split(" ").slice(1).join(" ")}` }),
     h("p", { class: "badge", text: `${TYPE_LABEL[dag.type] || dag.type}${dag.zone ? " · " + dag.zone : ""}` }),
     h("p", { class: "dur", text: minutesText(dag.minuten) }),
     h("p", { class: "dtitle", text: dag.titel }),
-    dag.beschrijving ? h("p", { class: "muted", text: dag.beschrijving }) : null);
+    dag.beschrijving ? h("p", { class: "muted", text: dag.beschrijving }) : null,
+    h("button", {
+      class: "btn ghost small", type: "button", text: "Kopieer prompt voor TrainingPeaks AI",
+      onclick: async () => {
+        try {
+          await navigator.clipboard.writeText(trainingPeaksPrompt(plan, dag));
+          copyStatus.textContent = "Prompt gekopieerd. Plak deze in TrainingPeaks.";
+        } catch {
+          copyStatus.textContent = "Kopiëren lukte niet. Controleer of je browser klembordtoegang toestaat.";
+        }
+      }
+    }),
+    copyStatus);
 }
 
 function checkinForm(plan, week) {
@@ -384,6 +420,74 @@ function checkinForm(plan, week) {
   h("label", { class: "check" }, klachten, h("span", { text: "Ik heb pijn, een blessure of ben ziek" })),
   field("Opmerking", opmerking),
   error, status, submit);
+}
+
+function coachChat(plan, week) {
+  const availableDays = plan.intake.dagen;
+  const defaultDay = week.dagen.find(item => availableDays.includes(item.dag) && item.type !== "rust")?.dag ?? availableDays[0];
+  const day = h("select", {}, ...availableDays.map(index =>
+    h("option", { value: index, selected: index === defaultDay, text: DAGEN_KORT[index] })));
+  const messages = h("div", { class: "chat", "aria-live": "polite" });
+  const error = h("p", { class: "error", role: "alert" });
+  const status = h("p", { class: "muted", role: "status" });
+  const input = h("textarea", { rows: 3, maxlength: 1000, required: true, placeholder: "Bijvoorbeeld: kun je deze training op hartslag uitleggen, of iets lichter maken?" });
+  const submit = h("button", { class: "btn", type: "submit", text: "Stuur naar de coach" });
+  let loadId = 0;
+  const renderMessages = items => {
+    clear(messages);
+    if (!items.length) messages.appendChild(h("p", { class: "muted", text: "Begin het gesprek met een vraag of vraag de coach om deze training aan te passen." }));
+    for (const item of items) {
+      messages.appendChild(h("div", { class: `chat-message ${item.role === "assistant" ? "coach" : "user"}` },
+        h("span", { class: "chat-label", text: item.role === "assistant" ? "Coach" : "Jij" }),
+        h("p", { class: "chat-bubble", text: item.content }),
+        item.updated ? h("span", { class: "hint", text: "Training bijgewerkt" }) : null));
+    }
+  };
+  const loadThread = async () => {
+    const requestId = ++loadId;
+    error.textContent = "";
+    status.textContent = "Gesprek laden…";
+    try {
+      const thread = await api("GET", `/api/coach/chat?week_no=${week.week_no}&day_no=${day.value}`);
+      if (requestId === loadId) renderMessages(thread.messages);
+    } catch (e) {
+      if (requestId === loadId) error.textContent = e.message;
+    } finally {
+      if (requestId === loadId) status.textContent = "";
+    }
+  };
+  day.addEventListener("change", loadThread);
+  const form = h("form", {
+    class: "stack coach-chat-form",
+    onsubmit: async event => {
+      event.preventDefault();
+      const bericht = input.value.trim();
+      if (!bericht) return;
+      error.textContent = "";
+      submit.disabled = true;
+      status.textContent = "De coach denkt mee…";
+      try {
+        await api("POST", "/api/coach/chat", { week_no: week.week_no, day_no: Number(day.value), bericht });
+        input.value = "";
+        state.data = await api("GET", "/api/plan");
+        state.week = week.week_no;
+        viewPlan();
+      } catch (e) {
+        error.textContent = e.message;
+        submit.disabled = false;
+        status.textContent = "";
+      }
+    }
+  },
+  field("Over welke training chat je?", day),
+  messages,
+  field("Bericht aan de coach", input),
+  h("p", { class: "hint", text: "De coach kan uitleg geven of alleen de gekozen dag aanpassen. Andere trainingen blijven staan. Gebruik TrainingPeaks AI om de gekopieerde prompt als workout op te bouwen." }),
+  error, status, submit);
+  loadThread();
+  return h("section", { class: "card stack" },
+    h("h2", { text: "Chat met je AI-coach" }),
+    form);
 }
 
 function viewPlan() {
@@ -428,7 +532,9 @@ function viewPlan() {
       week.uitleg ? h("p", { class: "muted", text: week.uitleg }) : null,
       h("p", { class: "muted", text: `Totaal ${minutesText(week.totaal_minuten)}` }),
       h("div", { class: "days-grid" }, ...week.dagen.map(d => dayCard(plan, week, d))),
+      h("p", { class: "muted", text: "De prompt wordt naar je klembord gekopieerd; plak hem daarna in TrainingPeaks AI. De hartslagdoelen gebruiken je daar ingestelde zones; er worden geen bpm-waarden verzonnen." }),
       week.tips ? h("p", { class: "tip", text: "Tip: " + week.tips }) : null),
+    coachChat(plan, week),
     isLast && !finished ? checkinForm(plan, week) : null,
     finished ? h("p", { class: "card", text: "Dit was de laatste week van je schema. Veel succes met je doel!" }) : null,
     h("p", { class: "muted" },

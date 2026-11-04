@@ -18,11 +18,15 @@ globalThis.fetch = async (url, init) => {
   if (!String(url).includes("api.groq.com")) return realFetch(url, init);
   const prompt = JSON.parse(init.body).messages[1].content;
   let content = "{}";
-  if (prompt.includes("vervolgvragen")) content = JSON.stringify({ vragen: [{ vraag: "Hoeveel uur train je nu?" }] });
+  if (prompt.includes("vervolgvragen")) content = JSON.stringify({ vragen: [{ vraag: "Hoeveel uur train je nu?" }, { vraag: "Heb je ervaring met intervallen?" }] });
   else if (prompt.includes("Maak een trainingsschema van")) {
     const n = Number(prompt.match(/van (\d+) weken/)[1]);
     content = JSON.stringify({ samenvatting: "Rustige opbouw naar je doel.", weken: Array.from({ length: n }, (_, i) => ({ week: i + 1, fase: "opbouw", focus: "Basis", uren: 6 })), week1: week(90) });
   } else if (prompt.includes("Maak nu week")) content = JSON.stringify({ uitleg: "Iets rustiger.", week: week(80) });
+  else if (prompt.includes("Nieuw bericht van de gebruiker")) content = JSON.stringify({
+    antwoord: "Ik heb deze training aangepast naar een rustige duurtraining.",
+    aanpassing: { type: "duurrit", minuten: 55, zone: "Z2", titel: "Rustige duur", beschrijving: "55 minuten op Z2, RPE 3-4." }
+  });
   return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 });
 };
 
@@ -57,7 +61,8 @@ const env = { DB: new FakeD1(), GROQ_API_KEY: "test" };
 const sandbox = {
   console, Date, Math, JSON, Number, String, Array, Promise, Object, Error, setTimeout, URL: { createObjectURL: () => "blob:x" }, Blob: class {},
   document: { getElementById: (id) => (id === "app" ? root.app : root.nav), createElement: (t) => new El(t), createTextNode: (t) => new TextNode(t), body: new El("body") },
-  window: { scrollTo() {} }, confirm: () => true,
+  window: { scrollTo() {} }, navigator: { clipboard: { writeText: async (value) => { sandbox.copiedText = value; } } }, confirm: () => true,
+  copiedText: "",
   fetch: async (path, init = {}) => {
     const headers = { ...(init.headers || {}), "CF-Connecting-IP": "1.1.1.1" };
     if (jar.cookie) headers.Cookie = jar.cookie;
@@ -87,19 +92,35 @@ inputs.find(i => i.attrs.name === "password").value = "een-lang-wachtwoord";
 inputs.find(i => i.attrs.name === "consent").checked = true;
 await submit(find(root.app, e => e.tagName === "FORM")[0]);
 ok(text().includes("Jouw doel en situatie"), "na registreren: intakeformulier");
+ok(text().includes("Welke meetapparatuur gebruik je?") && text().includes("TrainingPeaks-gegevens"), "meterkeuze en TrainingPeaks-import zichtbaar");
+const meter = find(root.app, e => e.tagName === "SELECT")[1];
+for (const option of meter.children) delete option.attrs.selected;
+meter.children.find(option => option.attrs.value === "heart_rate").attrs.selected = "";
 
 const doel = find(root.app, e => e.tagName === "INPUT" && e.attrs.type === "text")[0];
 doel.value = "Toertocht van 120 km";
 await submit(find(root.app, e => e.tagName === "FORM")[0]);
-ok(text().includes("Een paar vragen van de coach") && text().includes("Hoeveel uur train je nu?"), "vragen van de coach getoond");
+ok(text().includes("Vragen van de coach") && text().includes("Hoeveel uur train je nu?"), "eerste coachvraag in chat getoond");
 
 find(root.app, e => e.tagName === "TEXTAREA")[0].value = "4 uur";
+await submit(find(root.app, e => e.tagName === "FORM")[0]);
+ok(text().includes("Hoeveel uur train je nu?") && text().includes("Heb je ervaring met intervallen?") && text().includes("4 uur"), "chat toont gesprek en volgende vraag");
+find(root.app, e => e.tagName === "TEXTAREA")[0].value = "Ja, een beetje";
 await submit(find(root.app, e => e.tagName === "FORM")[0]);
 ok(text().includes("Toertocht van 120 km") && text().includes("Week 1") && text().includes("Rustige opbouw"), "schema getoond met week 1");
 ok(find(root.app, e => e.className.includes("day")).length >= 7, "zeven dagkaarten");
 ok(text().includes("Hoe ging week 1?"), "check-in formulier onder de laatste week");
+ok(text().includes("Chat met je AI-coach") && text().includes("Kopieer prompt voor TrainingPeaks AI"), "chatcoach en TrainingPeaks-workoutprompt zichtbaar");
+find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer prompt voor TrainingPeaks AI")[0].click();
+await tick();
+ok(sandbox.copiedText.includes("Build Intervals By: Duration") && sandbox.copiedText.includes("Intensity: Heart Rate") && sandbox.copiedText.includes("hartslagzones"), "TrainingPeaks-prompt gebruikt hartslagzones en workoutduur");
+const coachForm = find(root.app, e => e.tagName === "FORM" && e.children.some(c => c.tagName === "BUTTON" && c.textContent === "Stuur naar de coach"))[0];
+find(coachForm, e => e.tagName === "TEXTAREA")[0].value = "Maak deze training rustiger.";
+await submit(coachForm);
+ok(text().includes("Ik heb deze training aangepast") && text().includes("Training bijgewerkt"), "coachchat bewaart antwoord en past gekozen workout aan");
 
-await submit(find(root.app, e => e.tagName === "FORM")[0]);
+const checkin = find(root.app, e => e.tagName === "FORM" && e.children.some(c => c.tagName === "BUTTON" && c.textContent === "Maak week 2"))[0];
+await submit(checkin);
 ok(text().includes("Week 2") && text().includes("Iets rustiger."), "na check-in: week 2 met uitleg van de coach");
 ok(!text().includes("Hoe ging week 1?") && text().includes("Hoe ging week 2?"), "check-in hoort nu bij week 2");
 

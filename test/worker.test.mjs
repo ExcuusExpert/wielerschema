@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import { File } from "node:buffer";
+import { strToU8, zipSync } from "fflate";
 import worker from "../src/worker.js";
 
 const BASE = "https://wielerschema.test";
@@ -27,6 +29,7 @@ class FakeD1 {
 // Nagebootste Groq
 let groqCalls = 0;
 let groqMode = "ok";
+let lastGroqPrompt = "";
 const realFetch = globalThis.fetch;
 function weekJson({ minutes = 240, allDays = true } = {}) {
   const dagen = [];
@@ -40,6 +43,7 @@ globalThis.fetch = async (url, init) => {
   groqCalls++;
   if (groqMode === "busy") return new Response("{}", { status: 429 });
   const prompt = JSON.parse(init.body).messages[1].content;
+  lastGroqPrompt = prompt;
   let content;
   if (groqMode === "garbage") content = "Dit is geen JSON";
   else if (prompt.includes("vervolgvragen")) content = JSON.stringify({ vragen: [{ vraag: "Hoeveel uur train je nu per week?" }, { vraag: "Heb je ervaring met intervallen?" }] });
@@ -51,6 +55,10 @@ globalThis.fetch = async (url, init) => {
       week1: weekJson()
     });
   } else if (prompt.includes("Maak nu week")) content = JSON.stringify({ uitleg: "Iets rustiger.", week: weekJson({ minutes: 200 }) });
+  else if (prompt.includes("Nieuw bericht van de gebruiker")) content = JSON.stringify({
+    antwoord: "Ik maak de training rustiger en houd dezelfde trainingsdag aan.",
+    aanpassing: { type: "duurrit", minuten: 55, zone: "Z2", titel: "Rustige duur", beschrijving: "55 minuten op Z2, RPE 3-4." }
+  });
   else content = "{}";
   return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 });
 };
@@ -161,6 +169,7 @@ test("intake: ongeldige invoer wordt netjes geweigerd", async () => {
   const bad = async (patch) => (await api(env, "POST", "/api/intake/questions", { intake: { ...INTAKE, ...patch } }, { cookie })).status;
   assert.equal(await bad({ doel: "" }), 400);
   assert.equal(await bad({ niveau: "superman" }), 400);
+  assert.equal(await bad({ meter: "smartwatch" }), 400);
   assert.equal(await bad({ uren_per_week: 99 }), 400);
   assert.equal(await bad({ dagen: [2] }), 400);
   assert.equal(await bad({ datum: future(2) }), 400);
@@ -174,6 +183,101 @@ test("vragen van de coach", async () => {
   assert.equal(r.status, 200);
   assert.equal(r.data.vragen.length, 2);
   assert.equal(r.data.vragen[0].id, "v1");
+});
+
+test("coachchat kan uitleggen, een gekozen training aanpassen en het gesprek bewaren", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env);
+  const created = await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  assert.equal(created.status, 200);
+  const originalWeek = created.data.weeks[0];
+  const originalOtherDay = originalWeek.dagen.find(day => day.dag === 1);
+  const r = await api(env, "POST", "/api/coach/chat", {
+    week_no: 1, day_no: 3, bericht: "Maak deze training rustiger."
+  }, { cookie });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.aangepast, true);
+  assert.equal(r.data.week.dagen.find(day => day.dag === 3).minuten, 55);
+  assert.deepEqual(r.data.week.dagen.find(day => day.dag === 1), originalOtherDay);
+  const thread = await api(env, "GET", "/api/coach/chat?week_no=1&day_no=3", undefined, { cookie });
+  assert.equal(thread.data.messages.length, 2);
+  assert.equal(thread.data.messages[0].role, "user");
+  assert.equal(thread.data.messages[1].role, "assistant");
+  assert.equal(thread.data.messages[1].updated, true);
+  const badDay = await api(env, "POST", "/api/coach/chat", {
+    week_no: 1, day_no: 2, bericht: "Pas dinsdag aan."
+  }, { cookie });
+  assert.equal(badDay.status, 400);
+});
+
+test("TrainingPeaks-import verwerkt ZIP/CSV, beperkt tot een jaar en bewaart alleen samenvattingen", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env);
+  const today = new Date().toISOString().slice(0, 10);
+  const old = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
+  const summaryCsv = `Date,Duration,Distance,Average Power,Average Heart Rate\n${today},3600,25000,200,140\n${old},3600,25000,200,140\n`;
+  const metricsCsv = `Date,Weight,Sleep\n${today},75.5,8\n`;
+  const form = new FormData();
+  form.append("summary", new File([zipSync({ "workouts.csv": strToU8(summaryCsv) })], "summary.zip"));
+  const nestedMetrics = zipSync({ "metrics-export.zip": zipSync({ "metrics.csv": strToU8(metricsCsv) }) });
+  form.append("metrics", new File([nestedMetrics], "metrics.zip"));
+  form.append("ai_consent", "yes");
+  const res = await worker.fetch(new Request(BASE + "/api/trainingpeaks/import", {
+    method: "POST",
+    headers: { Cookie: cookie, "CF-Connecting-IP": "10.0.0.1" },
+    body: form
+  }), env);
+  const imported = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(imported));
+  assert.equal(imported.summary.activities, 1);
+  assert.equal(imported.summary.weeks.length, 1);
+  assert.equal(imported.summary.weeks[0].hours, 1);
+  assert.equal(imported.summary.weeks[0].avg_power, 200);
+  assert.deepEqual(imported.summary.weeks[0].metrics, { Weight: 75.5, Sleep: 8 });
+  const updateForm = new FormData();
+  updateForm.append("metrics", new File([zipSync({ "metrics.csv": strToU8(`Date,Weight\n${today},76\n`) })], "metrics.zip"));
+  updateForm.append("ai_consent", "yes");
+  const updateResponse = await worker.fetch(new Request(BASE + "/api/trainingpeaks/import", {
+    method: "POST", headers: { Cookie: cookie }, body: updateForm
+  }), env);
+  const merged = await updateResponse.json();
+  assert.equal(merged.summary.activities, 1);
+  assert.equal(merged.summary.weeks[0].avg_power, 200);
+  assert.deepEqual(merged.summary.weeks[0].metrics, { Weight: 76, Sleep: 8 });
+  const stored = env.DB.db.prepare("SELECT summary FROM training_history").get();
+  assert.ok(stored.summary.includes("Weight"));
+  assert.ok(!stored.summary.includes("workouts.csv"));
+  const savedSummary = (await api(env, "GET", "/api/trainingpeaks", undefined, { cookie })).data.summary;
+  assert.deepEqual(savedSummary.weeks, merged.summary.weeks);
+  assert.equal(savedSummary.activities, 1);
+  const otherCookie = await signup(env, "anders");
+  assert.equal((await api(env, "GET", "/api/trainingpeaks", undefined, { cookie: otherCookie })).data.summary, null);
+  const plan = await api(env, "POST", "/api/plan/create", { intake: { ...INTAKE, meter: "both" } }, { cookie });
+  assert.equal(plan.status, 200);
+  assert.equal(plan.data.plan.intake.meter, "both");
+  assert.match(lastGroqPrompt, /"avg_power":200/);
+  assert.match(lastGroqPrompt, /"Weight":76/);
+});
+
+test("TrainingPeaks-import vereist inloggen en ZIP-bestanden", async () => {
+  const env = makeEnv();
+  const noAuth = await worker.fetch(new Request(BASE + "/api/trainingpeaks/import", { method: "POST", body: new FormData() }), env);
+  assert.equal(noAuth.status, 401);
+  const cookie = await signup(env);
+  const validForm = new FormData();
+  validForm.append("summary", new File([zipSync({ "workouts.csv": strToU8("Date,Duration\n") })], "summary.zip"));
+  const noConsent = await worker.fetch(new Request(BASE + "/api/trainingpeaks/import", {
+    method: "POST", headers: { Cookie: cookie }, body: validForm
+  }), env);
+  assert.equal(noConsent.status, 400);
+  assert.equal((await noConsent.json()).error, "consent");
+  const form = new FormData();
+  form.append("summary", new File(["not a zip"], "summary.zip"));
+  form.append("ai_consent", "yes");
+  const res = await worker.fetch(new Request(BASE + "/api/trainingpeaks/import", {
+    method: "POST", headers: { Cookie: cookie }, body: form
+  }), env);
+  assert.equal(res.status, 400);
 });
 
 test("schema maken: vangrails op dagen, minuten en tekst", async () => {
@@ -273,7 +377,7 @@ test("export bevat geen wachtwoordgegevens; account verwijderen wist alles", asy
 
   assert.equal((await api(env, "POST", "/api/account/delete", { password: "verkeerd-wachtwoord" }, { cookie })).status, 401);
   assert.equal((await api(env, "POST", "/api/account/delete", { password: GOOD_PW }, { cookie })).status, 200);
-  for (const table of ["users", "sessions", "plans", "weeks"]) {
+  for (const table of ["users", "sessions", "plans", "weeks", "training_history"]) {
     assert.equal(env.DB.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0, table);
   }
   assert.equal((await api(env, "GET", "/api/me", undefined, { cookie })).status, 401);

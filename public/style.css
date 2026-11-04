@@ -62,6 +62,8 @@ fieldset.days legend { padding: 0 6px; font-weight: 600; font-size: .92rem; }
 .chat-label { color: var(--muted); font-size: .78rem; font-weight: 700; }
 .chat-bubble { background: var(--card2); border: 1px solid var(--line); border-radius: 14px 14px 14px 3px; padding: 10px 13px; white-space: pre-wrap; }
 .chat-message.user .chat-bubble { background: #33301b; border-color: #65551e; border-radius: 14px 14px 3px 14px; }
+.chat-message.coach { align-self: flex-start; }
+.coach-chat-form { margin-top: 4px; }
 
 .outline { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { display: flex; flex-direction: column; gap: 1px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card2); font-size: .8rem; min-width: 74px; }
