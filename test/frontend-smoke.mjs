@@ -17,7 +17,7 @@ const week = (m) => ({
     const warmup = Math.round(m * 0.15);
     const cooldown = Math.round(m * 0.15);
     return {
-      dag: d, type: "duurrit", minuten: m, zone: "Z2", titel: "Duurrit", beschrijving: "Rustig, RPE 4",
+      dag: d, type: "duurrit", minuten: m, zone: "Z2", titel: "Duurrit", beschrijving: "Rustig en gelijkmatig.",
       blokken: [
         { minuten: warmup, zone: "Z1", label: "Warming-up" },
         { minuten: m - warmup - cooldown, zone: "Z2", label: "Hoofdset" },
@@ -206,14 +206,16 @@ ok(find(root.app, e => e.className === "workout-profile-chart").length === 1 &&
   text().includes("De blokken volgen de trainingsopbouw uit het schema."),
   "duurtraining toont de drie werkelijke trainingsblokken in de detailpopup");
 ok(text().includes("Optioneel: gebruiken in TrainingPeaks AI"), "TrainingPeaks-prompt zit achter een optionele uitklapper");
-find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer trainingsprompt")[0].click();
+find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer prompt voor TrainingPeaks AI")[0].click();
 await tick();
-ok(sandbox.copiedText.includes("Build Intervals By: Duration") && sandbox.copiedText.includes("Intensity: Heart Rate") && sandbox.copiedText.includes("hartslagzones"), "TrainingPeaks-prompt gebruikt hartslagzones en workoutduur");
+ok(sandbox.copiedText.includes("Build Intervals By: Duration") && sandbox.copiedText.includes("Intensity:") &&
+  sandbox.copiedText.includes("hartslagzones") && !sandbox.copiedText.includes("RPE"),
+  "TrainingPeaks-prompt gebruikt de ingestelde trainingszones en workoutduur zonder RPE");
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Training aanpassen")[0].click();
 const editForm = find(root.app, e => e.tagName === "FORM" && e.className.includes("workout-editor"))[0];
 find(editForm, e => e.tagName === "INPUT" && e.attrs.type === "number")[0].value = "70";
 find(editForm, e => e.tagName === "INPUT" && e.attrs.type === "text")[0].value = "Handmatige duurrit";
-find(editForm, e => e.tagName === "TEXTAREA")[0].value = "70 minuten rustig, RPE 3.";
+find(editForm, e => e.tagName === "TEXTAREA")[0].value = "70 minuten rustig en gelijkmatig.";
 const typeSelect = find(editForm, e => e.tagName === "SELECT")[0];
 for (const option of typeSelect.children) delete option.attrs.selected;
 typeSelect.children.find(option => option.attrs.value === "vo2max").attrs.selected = "";
@@ -222,17 +224,35 @@ const zoneSelect = find(editForm, e => e.tagName === "SELECT")[1];
 for (const option of zoneSelect.children) delete option.attrs.selected;
 zoneSelect.children.find(option => option.attrs.value === "Z4").attrs.selected = "";
 ok(!zoneSelect.children.some(option => option.attrs.value === "Z8"), "handmatige training biedt geen zone boven het ingestelde profiel");
+const addBlockButton = find(editForm, e => e.tagName === "BUTTON" && e.textContent === "Intervalblok toevoegen")[0];
+addBlockButton.click();
+addBlockButton.click();
+const blockRows = find(editForm, e => e.className === "workout-block-row");
+const blockMinutes = [10, 15, 5, 15, 25];
+const blockZones = ["Z1", "Z4", "Z2", "Z4", "Z1"];
+const blockLabels = ["Warming-up", "Interval", "Herstel", "Interval", "Cooling-down"];
+blockRows.forEach((row, index) => {
+  find(row, e => e.tagName === "INPUT" && e.attrs.type === "number")[0].value = String(blockMinutes[index]);
+  const blockZone = find(row, e => e.tagName === "SELECT")[0];
+  for (const option of blockZone.children) delete option.attrs.selected;
+  blockZone.children.find(option => option.attrs.value === blockZones[index]).attrs.selected = "";
+  find(row, e => e.tagName === "INPUT" && e.attrs.type === "text")[0].value = blockLabels[index];
+});
 await submit(editForm);
 ok(text().includes("Handmatige duurrit") && text().includes("1 u 10 min"), "training handmatig aanpassen slaat wijzigingen in het schema op");
 find(root.app, e => e.className.includes("day-details-button"))[dayToEdit].click();
-ok(find(root.app, e => e.className.includes("profile-segment")).length > 3 && text().includes("Schematische opbouw"),
-  "intervaltraining toont afwisselende zones met een label voor de schematische intervallen");
-find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer trainingsprompt")[0].click();
+ok(find(root.app, e => e.className.includes("profile-segment")).length === 5 &&
+  text().includes("De blokken volgen de trainingsopbouw uit het schema."),
+  "handmatig ingestelde warming-up, intervallen en herstel zijn zichtbaar in het zoneprofiel");
+find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer prompt voor TrainingPeaks AI")[0].click();
 await tick();
 ok(sandbox.copiedText.includes("Duration: 70 minuten") &&
-  sandbox.copiedText.includes("Target: Z4 volgens mijn ingestelde hartslagzones, 70 minuten rustig, RPE 3.") &&
+  sandbox.copiedText.includes("Target: Z4 volgens mijn ingestelde hartslagzones; 70 minuten rustig en gelijkmatig.") &&
+  sandbox.copiedText.includes("15 min Z4: Interval") &&
+  sandbox.copiedText.includes("5 min Z2: Herstel") &&
+  !sandbox.copiedText.includes("RPE") &&
   sandbox.copiedText.includes("Training: Handmatige duurrit."),
-  "TrainingPeaks-prompt gebruikt de nieuwste handmatig opgeslagen training");
+  "TrainingPeaks AI-prompt gebruikt de bijgewerkte handmatige training en exacte blokken zonder RPE");
 
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Activiteiten")[0].click();
 ok(text().includes("Nog geen activiteiten gekoppeld") && !text().includes("TrainingPeaks"), "activiteiten-tab toont status zonder importfunctie");

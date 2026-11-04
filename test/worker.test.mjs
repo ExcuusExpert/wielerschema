@@ -34,7 +34,7 @@ const realFetch = globalThis.fetch;
 function weekJson({ minutes = 240, allDays = true } = {}) {
   const dagen = [];
   for (let d = 0; d < 7; d++) {
-    dagen.push({ dag: d, type: allDays || d % 2 === 0 ? "duurrit" : "rust", minuten: minutes, zone: "Z2", titel: d === 0 ? "<script>alert(1)</script>Rustig" : "Duurrit", beschrijving: "Rustig rijden, RPE 4." });
+    dagen.push({ dag: d, type: allDays || d % 2 === 0 ? "duurrit" : "rust", minuten: minutes, zone: "Z2", titel: d === 0 ? "<script>alert(1)</script>Rustig" : "Duurrit", beschrijving: "Rustig rijden, gelijkmatig tempo." });
   }
   return { dagen, tips: "Drink genoeg." };
 }
@@ -65,6 +65,11 @@ globalThis.fetch = async (url, init) => {
       antwoord: "Ik heb de MTB-rit op zaterdag in je schema gezet.",
       voorstel: { dag: 5, type: "mtb", minuten: 45, zone: "Z2", titel: "MTB-rit met de club", beschrijving: "45 minuten op Z2." }
     });
+    else if (coachMode === "today") content = JSON.stringify({
+      antwoord: "Vandaag staat je rustige duurtraining van 45 minuten in Z2 gepland.",
+      voorstel: null,
+      week_feedback: null
+    });
     else if (coachMode === "week-checkin") content = JSON.stringify({
       antwoord: "Dank je voor je terugblik.",
       voorstel: null,
@@ -72,7 +77,7 @@ globalThis.fetch = async (url, init) => {
     });
     else content = JSON.stringify({
       antwoord: "Ik stel een rustigere training voor.",
-      voorstel: { dag: 3, type: "duurrit", minuten: 55, zone: "Z2", titel: "Rustige duur", beschrijving: "55 minuten op Z2, RPE 3-4." },
+      voorstel: { dag: 3, type: "duurrit", minuten: 55, zone: "Z2", titel: "Rustige duur", beschrijving: "55 minuten op Z2, rustig en gelijkmatig." },
       week_feedback: null
     });
   }
@@ -304,12 +309,12 @@ test("training handmatig aanpassen slaat alleen een geldige wijziging op", async
   }, { cookie });
 
   assert.equal((await api(env, "POST", "/api/plan/workout", {
-    week_no: 1, day_no: 3, workout: { type: "tempo", minuten: 55, zone: "Z2", titel: "Tempo", beschrijving: "RPE 5." }
+    week_no: 1, day_no: 3, workout: { type: "tempo", minuten: 55, zone: "Z2", titel: "Tempo", beschrijving: "Stevig tempo." }
   })).status, 401);
-  assert.equal((await edit({ type: "tempo", minuten: 55, zone: "Z9", titel: "Tempo", beschrijving: "RPE 5." })).status, 400);
-  assert.equal((await edit({ type: "tempo", minuten: 360, zone: "Z2", titel: "Tempo", beschrijving: "RPE 5." })).status, 400);
+  assert.equal((await edit({ type: "tempo", minuten: 55, zone: "Z9", titel: "Tempo", beschrijving: "Stevig tempo." })).status, 400);
+  assert.equal((await edit({ type: "tempo", minuten: 360, zone: "Z2", titel: "Tempo", beschrijving: "Stevig tempo." })).status, 400);
   assert.equal((await api(env, "POST", "/api/plan/workout", {
-    week_no: 1, day_no: 2, workout: { type: "tempo", minuten: 55, zone: "Z2", titel: "Tempo", beschrijving: "RPE 5." }
+    week_no: 1, day_no: 2, workout: { type: "tempo", minuten: 55, zone: "Z2", titel: "Tempo", beschrijving: "Stevig tempo." }
   }, { cookie })).status, 400);
 
   const updated = await edit({
@@ -326,6 +331,8 @@ test("training handmatig aanpassen slaat alleen een geldige wijziging op", async
   const updatedWorkout = updated.data.week.dagen.find(day => day.dag === 3);
   assert.equal(updatedWorkout.titel, "Handmatige tempotraining");
   assert.equal(updatedWorkout.minuten, 55);
+  assert.equal(updatedWorkout.beschrijving, "55 minuten.");
+  assert.doesNotMatch(updatedWorkout.beschrijving, /RPE/i);
   assert.deepEqual(updatedWorkout.blokken.map(({ minuten, zone }) => ({ minuten, zone })), [
     { minuten: 10, zone: "Z1" }, { minuten: 15, zone: "Z4" }, { minuten: 5, zone: "Z2" },
     { minuten: 15, zone: "Z4" }, { minuten: 10, zone: "Z1" }
@@ -352,7 +359,7 @@ test("training handmatig aanpassen slaat alleen een geldige wijziging op", async
   assert.equal(restricted.status, 400);
   const safe = await api(env, "POST", "/api/plan/workout", {
     week_no: 2, day_no: 3,
-    workout: { type: "duurrit", minuten: 30, zone: "Z2", titel: "Rustige duur", beschrijving: "Rustig, RPE 2." }
+    workout: { type: "duurrit", minuten: 30, zone: "Z2", titel: "Rustige duur", beschrijving: "Rustig en beheerst." }
   }, { cookie });
   assert.equal(safe.status, 200, JSON.stringify(safe.data));
 });
@@ -407,6 +414,48 @@ test("coachchat toont ook bij een expliciet verzoek eerst een voorstel en past p
   const changed = await api(env, "GET", "/api/plan", undefined, { cookie });
   assert.equal(changed.data.weeks[0].dagen.find(day => day.dag === 3).minuten, 55);
   assert.notEqual(changed.data.weeks[0].dagen.find(day => day.dag === 3).minuten, originalWeek.dagen.find(day => day.dag === 3).minuten);
+});
+
+test("doorlopende coachchat krijgt de datum en exacte training van vandaag mee", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env, "vandaag");
+  await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  const userId = env.DB.db.prepare("SELECT id FROM users WHERE username = ?").get("vandaag").id;
+  const todayDate = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Amsterdam" });
+  const todayDay = (new Date(`${todayDate}T00:00:00Z`).getUTCDay() + 6) % 7;
+  const monday = new Date(`${todayDate}T00:00:00Z`);
+  monday.setUTCDate(monday.getUTCDate() - todayDay);
+  const startDate = monday.toISOString().slice(0, 10);
+  env.DB.db.prepare("UPDATE plans SET start_date = ? WHERE user_id = ?").run(startDate, userId);
+  const week = JSON.parse(env.DB.db.prepare("SELECT detail FROM weeks WHERE user_id = ? AND week_no = 1").get(userId).detail);
+  week.dagen[todayDay] = {
+    dag: todayDay, type: "duurrit", minuten: 45, zone: "Z2", titel: "Vandaag: rustige duur",
+    beschrijving: "Rustig, RPE 4.",
+    blokken: [
+      { minuten: 10, zone: "Z1", label: "Warming-up" },
+      { minuten: 25, zone: "Z2", label: "Rustige duur" },
+      { minuten: 10, zone: "Z1", label: "Cooling-down" }
+    ]
+  };
+  week.totaal_minuten = week.dagen.filter(day => day.type !== "rust").reduce((total, day) => total + day.minuten, 0);
+  env.DB.db.prepare("UPDATE weeks SET detail = ? WHERE user_id = ? AND week_no = 1").run(JSON.stringify(week), userId);
+
+  coachMode = "today";
+  const reply = await api(env, "POST", "/api/coach/chat", {
+    week_no: 2, day_no: 0, bericht: "Wat moet ik vandaag doen?", global: true
+  }, { cookie });
+  coachMode = "proposal";
+  assert.equal(reply.status, 200, JSON.stringify(reply.data));
+  assert.match(reply.data.antwoord, /45 minuten in Z2/);
+  assert.ok(lastGroqPrompt.includes(`Vandaag is ${todayDate} (${["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag"][todayDay]}, dag ${todayDay})`));
+  assert.ok(lastGroqPrompt.includes('"titel":"Vandaag: rustige duur"'));
+  assert.ok(lastGroqPrompt.includes('"minuten":45'));
+  assert.ok(!lastGroqPrompt.includes("RPE"));
+  const savedMessage = env.DB.db.prepare(
+    "SELECT week_no, day_no FROM coach_messages WHERE user_id = ? AND role = 'user' ORDER BY created_at DESC LIMIT 1"
+  ).get(userId);
+  assert.equal(savedMessage.week_no, 1);
+  assert.equal(savedMessage.day_no, todayDay);
 });
 
 test("een vrijblijvende trainingsvraag blijft een voorstel totdat de gebruiker bevestigt", async () => {
@@ -470,7 +519,8 @@ test("doorlopende coachchat toont gesprekken samen en neemt eerdere berichten me
   assert.equal(conversation.status, 200);
   assert.equal(conversation.data.messages.length, 4);
   assert.equal(conversation.data.messages[0].day_no, 1);
-  assert.equal(conversation.data.messages[2].day_no, 3);
+  assert.equal(conversation.data.messages[2].day_no,
+    (new Date(`${new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Amsterdam" })}T00:00:00Z`).getUTCDay() + 6) % 7);
   assert.equal(conversation.data.messages[3].role, "assistant");
 });
 

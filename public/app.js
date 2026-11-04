@@ -65,6 +65,15 @@ function minutesText(m) {
   return min ? `${hours} u ${min} min` : `${hours} u`;
 }
 
+function dateOffset(from, to) {
+  return Math.floor((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
+}
+
+function cleanWorkoutDescription(text) {
+  return String(text || "").replace(/\bRPE\s*\d+(?:\s*[-–/]\s*\d+)?(?:\s*\/\s*10)?/gi, "")
+    .replace(/\s+([,.])/g, "$1").replace(/,\./g, ".").replace(/\s{2,}/g, " ").trim();
+}
+
 function addDays(iso, n) {
   const d = new Date(iso + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + n);
@@ -748,23 +757,28 @@ function downloadIcs(plan, week) {
 function trainingPeaksPrompt(plan, dag) {
   const meter = plan.intake.meter;
   const intensity = meter === "heart_rate" ? "Heart Rate (gebruik mijn ingestelde hartslagzones)"
-    : meter === "both" ? "Heart Rate als primair doel; gebruik vermogen alleen als dit bij de training staat"
-      : meter === "power" && plan.intake.ftp ? `percentOfFtp (FTP ${plan.intake.ftp} W)`
-        : "RPE/gevoel (geen meterdoel verzinnen)";
+    : meter === "both" ? "Gebruik de zones die per trainingsblok zijn genoemd; verzin geen extra doelen"
+      : meter === "power" && plan.intake.ftp ? `Vermogen volgens mijn FTP van ${plan.intake.ftp} W en ingestelde zones`
+        : "Geen vermogens- of hartslagdoel; volg duur en trainingsbeschrijving";
   const zoneTarget = meter === "power" ? "mijn ingestelde vermogenszones"
     : ["heart_rate", "both"].includes(meter) ? "mijn ingestelde hartslagzones"
-      : "de genoemde trainingszone en RPE";
-  const target = dag.zone ? `${dag.zone} volgens ${zoneTarget}, ${dag.beschrijving}` : dag.beschrijving;
+      : "de genoemde trainingszone";
+  const description = cleanWorkoutDescription(dag.beschrijving);
+  const target = dag.zone ? `${dag.zone} volgens ${zoneTarget}${description ? `; ${description}` : ""}` : description;
+  const blocks = Array.isArray(dag.blokken) && dag.blokken.length
+    ? `\nTrainingsblokken:\n${dag.blokken.map(block =>
+      `- ${block.minuten} min${block.zone ? ` ${block.zone}` : ""}${block.label ? `: ${block.label}` : ""}`).join("\n")}`
+    : "";
   return [
     "Maak hiervan een gestructureerde wielertraining in TrainingPeaks.",
     "Sport Type: Bike",
     `Intensity: ${intensity}`,
     "Build Intervals By: Duration",
-    "Block Type: warming-up, hoofdset, herstelblokken en cooling-down waar passend",
+    "Maak alleen blokken die hieronder zijn opgegeven; verzin geen intervalstructuur.",
     `Duration: ${dag.minuten} minuten`,
-    `Target: ${target || "rustig, RPE 3-4/10"}`,
-    `Training: ${dag.titel}. ${dag.beschrijving}`,
-    "Behoud de totale duur en de genoemde intervallen. Verzin geen FTP, wattages of hartslag in bpm."
+    `Target: ${target || "Volg de trainingsbeschrijving en houd het tempo beheerst."}`,
+    `Training: ${dag.titel}. ${description}${blocks}`,
+    "Behoud exact de totale duur, zones en opgegeven blokken. Verzin geen FTP, wattages, hartslagwaarden of intervallen."
   ].join("\n");
 }
 
@@ -777,7 +791,7 @@ function dayCard(plan, week, dag) {
       h("p", { class: "dur", text: minutesText(dag.minuten) }),
       h("p", { class: "dtitle", text: dag.titel })),
     h("button", {
-      class: "btn ghost small day-details-button", type: "button", text: "Details bekijken",
+      class: "btn ghost small day-details-button", type: "button", text: "Details / aanpassen",
       "aria-label": `Bekijk details van ${DAGEN_KORT[dag.dag]}: ${dag.titel || "rust"}`,
       onclick: () => openWorkoutDetails(plan, week, dag)
     }));
@@ -881,9 +895,9 @@ function openWorkoutDetails(plan, week, dag) {
     editButton,
     dag.type !== "rust" ? h("details", { class: "optional-trainingpeaks" },
       h("summary", { text: "Optioneel: gebruiken in TrainingPeaks AI" }),
-      h("p", { class: "hint", text: "Kopieer de training als je TrainingPeaks gebruikt." }),
+      h("p", { class: "hint", text: "Kopieer de training inclusief je zones en eventuele intervalblokken." }),
       h("button", {
-        class: "btn ghost small", type: "button", text: "Kopieer trainingsprompt",
+        class: "btn ghost small", type: "button", text: "Kopieer prompt voor TrainingPeaks AI",
         onclick: async () => {
           try {
             const currentPlan = state.data?.plan || plan;
@@ -914,6 +928,44 @@ function workoutEditor(plan, week, dag, error, status, onCancel) {
     h("option", { value, selected: (dag.zone || "") === value, text: value || "Geen zone" })));
   const title = h("input", { type: "text", maxlength: 80, value: dag.type === "rust" ? "" : dag.titel });
   const description = h("textarea", { rows: 3, maxlength: 500 }, dag.type === "rust" ? "" : dag.beschrijving);
+  const blockRows = h("div", { class: "workout-block-rows stack" });
+  const blocks = Array.isArray(dag.blokken) ? dag.blokken.map(block => ({
+    minuten: String(block.minuten), zone: block.zone || "", label: block.label || ""
+  })) : [];
+  const renderBlocks = () => {
+    for (const block of blocks) {
+      if (block.inputs) {
+        block.minuten = block.inputs.blockMinutes.value;
+        block.zone = block.inputs.blockZone.value;
+        block.label = block.inputs.label.value;
+      }
+    }
+    clear(blockRows);
+    for (const [index, block] of blocks.entries()) {
+      const blockMinutes = h("input", { type: "number", min: 1, max: 360, step: 1, required: true, value: block.minuten });
+      const blockZone = h("select", {}, ZONE_OPTIONS.filter(value => !value || Number(value.slice(1)) <= maxZone).map(value =>
+        h("option", { value, selected: block.zone === value, text: value || "Geen zone" })));
+      const label = h("input", { type: "text", maxlength: 50, placeholder: "Bijv. warming-up, interval, herstel", value: block.label });
+      blockRows.appendChild(h("div", { class: "workout-block-row" },
+        field("Minuten", blockMinutes),
+        field("Zone", blockZone),
+        field("Onderdeel", label),
+        h("button", {
+          class: "btn ghost small", type: "button", text: "Verwijderen",
+          "aria-label": `Verwijder trainingsblok ${index + 1}`,
+          onclick: () => { blocks.splice(index, 1); renderBlocks(); }
+        })));
+      block.inputs = { blockMinutes, blockZone, label };
+    }
+  };
+  const addBlock = h("button", {
+    class: "btn ghost small", type: "button", text: "Intervalblok toevoegen",
+    onclick: () => {
+      blocks.push({ minuten: "1", zone: zone.value, label: "Interval" });
+      renderBlocks();
+    }
+  });
+  renderBlocks();
   const save = h("button", { class: "btn small", type: "submit", text: "Wijziging opslaan" });
   const updateRequirements = () => {
     const resting = type.value === "rust";
@@ -924,6 +976,10 @@ function workoutEditor(plan, week, dag, error, status, onCancel) {
     zone.disabled = resting;
     title.disabled = resting;
     description.disabled = resting;
+    for (const block of blocks) {
+      for (const input of Object.values(block.inputs || {})) input.disabled = resting;
+    }
+    addBlock.disabled = resting;
   };
   type.addEventListener("change", updateRequirements);
   updateRequirements();
@@ -937,13 +993,24 @@ function workoutEditor(plan, week, dag, error, status, onCancel) {
     onsubmit: async event => {
       event.preventDefault();
       error.textContent = "";
+      const editedBlocks = blocks.map(block => ({
+        minuten: Number(block.inputs.blockMinutes.value),
+        zone: block.inputs.blockZone.value,
+        label: block.inputs.label.value
+      }));
+      if (type.value !== "rust" && editedBlocks.length &&
+          editedBlocks.reduce((total, block) => total + block.minuten, 0) !== Number(minutes.value)) {
+        error.textContent = "De minuten van je trainingsblokken moeten samen de totale trainingsduur zijn.";
+        return;
+      }
       const done = busyButton(save, "Schema opslaan…", status);
       try {
         await api("POST", "/api/plan/workout", {
           week_no: week.week_no, day_no: dag.dag,
           workout: {
             type: type.value, minuten: minutes.value ? Number(minutes.value) : 0,
-            zone: zone.value, titel: title.value, beschrijving: description.value
+            zone: zone.value, titel: title.value, beschrijving: description.value,
+            blokken: editedBlocks.length ? editedBlocks : null
           }
         });
         state.data = await api("GET", "/api/plan");
@@ -958,6 +1025,10 @@ function workoutEditor(plan, week, dag, error, status, onCancel) {
   field("Trainingstype", type),
   h("div", { class: "grid2" }, field("Duur in minuten", minutes), field("Trainingszone", zone)),
   field("Titel", title), field("Beschrijving", description),
+  h("details", { class: "workout-block-editor" },
+    h("summary", { text: "Interval- en herstelblokken aanpassen (optioneel)" }),
+    h("p", { class: "hint", text: "Voeg de blokken toe als je een intervaltraining wilt uitschrijven. De blokminuten moeten samen de totale trainingsduur zijn." }),
+    blockRows, addBlock),
   h("div", { class: "row" }, save, cancel));
   return editor;
 }
@@ -968,7 +1039,7 @@ function checkinIsDue(plan, week) {
 }
 
 function coachChat(plan, currentWeek) {
-  const defaultDay = currentWeek.dagen.find(item => plan.intake.dagen.includes(item.dag) && item.type !== "rust")?.dag ?? plan.intake.dagen[0];
+  const defaultDay = (new Date(`${todayIso()}T00:00:00Z`).getUTCDay() + 6) % 7;
   const checkinDue = checkinIsDue(plan, currentWeek);
   const messages = h("div", { class: "chat", "aria-live": "polite", "aria-relevant": "additions text" });
   const error = h("p", { class: "error", role: "alert" });
@@ -1105,7 +1176,10 @@ function viewCoach(preserveScroll = false) {
   state.page = "coach";
   renderNav("coach");
   if (!state.data?.plan) return viewIntake();
-  const week = state.data.weeks[state.data.weeks.length - 1];
+  const offset = dateOffset(state.data.plan.start_date, todayIso());
+  const currentWeekNo = Math.min(state.data.plan.total_weeks, Math.max(1, Math.floor(offset / 7) + 1));
+  const week = state.data.weeks.find(item => item.week_no === currentWeekNo) ||
+    (offset < 0 ? state.data.weeks[0] : state.data.weeks[state.data.weeks.length - 1]);
   state.week = week.week_no;
   show(
     h("div", { class: "page-heading" },

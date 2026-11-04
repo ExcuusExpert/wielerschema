@@ -152,6 +152,11 @@ fieldset.days legend { padding: 0 6px; font-weight: 600; font-size: .92rem; }
 .workout-detail-summary { display: grid; justify-items: start; gap: 10px; }
 .workout-detail-summary > strong { font-size: 1.4rem; }
 .workout-profile { display: grid; gap: 9px; width: 100%; margin: 4px 0; }
+.workout-block-editor { padding-top: 12px; border-top: 1px solid var(--line); }
+.workout-block-editor summary { color: var(--text); font-weight: 650; cursor: pointer; }
+.workout-block-editor .btn { margin-top: 8px; }
+.workout-block-row { display: grid; grid-template-columns: minmax(70px, .7fr) minmax(90px, .8fr) minmax(150px, 1.6fr) auto; align-items: end; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: #f8faf8; }
+.workout-block-row .field { min-width: 0; }
 .workout-profile figcaption { display: grid; gap: 2px; }
 .workout-profile-chart { display: flex; align-items: flex-end; width: 100%; height: 132px; overflow: hidden; border-bottom: 1px solid #cbd6df; background: repeating-linear-gradient(to top, #edf2f6 0 1px, transparent 1px 25%); }
 .profile-segment { position: relative; display: flex; flex: 1 1 0; min-width: 3px; align-items: flex-start; justify-content: center; border-top: 3px solid #2455f4; background: #075b92; transition: height .2s ease; }
@@ -196,6 +201,8 @@ fieldset.days legend { padding: 0 6px; font-weight: 600; font-size: .92rem; }
 @media (max-width: 560px) {
   .activity-reflection { align-items: stretch; flex-direction: column; }
   .activity-reflection .btn { width: 100%; }
+  .workout-block-row { grid-template-columns: 1fr 1fr; }
+  .workout-block-row .field:nth-child(3) { grid-column: 1 / -1; }
 }
 
 .privacy-page h2 { margin: 26px 0 8px; }
