@@ -175,7 +175,13 @@ function renderNav(activePage = state.page) {
   clear(nav);
   clear(sidebarAccount);
   clear(coachLauncher);
-  if (!state.user) return;
+  if (!state.user) {
+    nav.append(
+      h("button", { class: "nav-item", type: "button", text: "Inloggen", onclick: () => viewAuth("login") }),
+      h("button", { class: "nav-item", type: "button", text: "Account maken", onclick: () => viewAuth("register") })
+    );
+    return;
+  }
   const pages = [
     ["plan", "Plan", () => state.data?.plan ? viewPlan() : viewIntake()],
     ["coach", "Coach", viewCoach],
@@ -250,7 +256,9 @@ function viewAuth(mode = "login") {
   field("Gebruikersnaam", username, mode === "register" ? "Geen e-mailadres nodig. Kies een naam om mee in te loggen." : null),
   field("Wachtwoord", password, mode === "register" ? "Minstens 10 tekens. Let op: wachtwoord vergeten kan nu nog niet hersteld worden." : null),
   mode === "register"
-    ? h("label", { class: "check" }, consent, h("span", {}, "Ik ga akkoord met de ", h("a", { href: "privacy.html", target: "_blank", rel: "noopener" }, "privacyverklaring"), ". Mijn trainingsgegevens en eventuele gezondheidsgegevens mogen met een AI-dienst (Groq) worden verwerkt om mijn schema te maken."))
+    ? h("div", { class: "stack" },
+        h("label", { class: "check" }, consent, h("span", {}, "Ik heb de ", h("a", { href: "privacy.html", target: "_blank", rel: "noopener" }, "privacyverklaring"), " gelezen en ga akkoord met verwerking van mijn gegevens voor deze dienst, waaronder verwerking van trainingsgegevens door de AI-coach.")),
+        h("p", { class: "hint" }, "Ben je jonger dan 18? Bespreek je schema en trainingsbelasting met je ouder/verzorger en jeugdtrainer. De coach is geen vervanging voor begeleiding."))
     : null,
   error,
   submit,
@@ -259,11 +267,42 @@ function viewAuth(mode = "login") {
     h("button", { class: "link", type: "button", text: mode === "login" ? "Maak er een" : "Log in", onclick: () => viewAuth(mode === "login" ? "register" : "login") }))
   );
 
+  show(h("button", { class: "link home-back", type: "button", text: "← Terug naar startpagina", onclick: viewHome }), form);
+}
+
+function viewHome() {
+  state.user = null;
+  state.data = null;
+  state.page = "home";
+  renderNav();
   show(
-    h("section", { class: "hero" },
-      h("h1", { text: "Een trainingsschema dat met je meegroeit" }),
-      h("p", { text: "Vertel wat je wilt bereiken. De AI-coach stelt eerst gerichte vragen, maakt een schema voor je beschikbare dagen en stuurt elke week bij op basis van hoe het ging." })),
-    form
+    h("section", { class: "landing-hero" },
+      h("p", { class: "eyebrow", text: "TRAIN MET EEN PLAN" }),
+      h("h1", {}, "Jouw wielerdoel. ", h("span", { text: "Een plan dat bij jou past." })),
+      h("p", { class: "landing-lede", text: "Maak een overzichtelijk trainingsschema, bespreek trainingen met je coach en stuur je plan bij naarmate je verder komt." }),
+      h("div", { class: "row landing-actions" },
+        h("button", { class: "btn", type: "button", text: "Maak mijn schema", onclick: () => viewAuth("register") }),
+        h("button", { class: "btn ghost", type: "button", text: "Ik heb al een account", onclick: () => viewAuth("login") })),
+      h("p", { class: "landing-note", text: "Voor beginnende en ervaren wielrenners, inclusief jeugdrenners van 12 tot 18 jaar." })),
+    h("section", { class: "landing-grid", "aria-label": "Zo werkt WielerSchema" },
+      h("article", { class: "landing-card" },
+        h("span", { class: "landing-number", text: "01" }),
+        h("h2", { text: "Vertel over je doel" }),
+        h("p", { text: "Beantwoord een paar duidelijke stappen over je doel, beschikbare tijd en trainingservaring." })),
+      h("article", { class: "landing-card" },
+        h("span", { class: "landing-number", text: "02" }),
+        h("h2", { text: "Krijg een plan op maat" }),
+        h("p", { text: "De coach maakt een weekschema op basis van jouw informatie en beschikbare trainingsdagen." })),
+      h("article", { class: "landing-card" },
+        h("span", { class: "landing-number", text: "03" }),
+        h("h2", { text: "Blijf bijsturen" }),
+        h("p", { text: "Gebruik de chat om vragen te stellen en bekijk coachvoorstellen voordat je ze toepast." }))),
+    h("section", { class: "youth-notice" },
+      h("h2", { text: "Jeugdrenner?" }),
+      h("p", { text: "WielerSchema is een hulpmiddel en geen medische of professionele begeleiding. Ben je jonger dan 18, bespreek je schema en trainingsbelasting met je ouder/verzorger en een gekwalificeerde jeugdtrainer." })),
+    h("section", { class: "landing-integrations" },
+      h("h2", { text: "Koppelingen" }),
+      h("p", { text: "TrainingPeaks-import en handmatige trainingsmetingen zijn beschikbaar. Garmin- en Wahoo-koppelingen zijn nog niet beschikbaar; die voegen we pas toe met officiële API-toegang." }))
   );
 }
 
@@ -273,16 +312,17 @@ function viewIntake(prefill) {
   renderNav("plan");
   const p = prefill || {};
   const savedProfile = state.profile || {};
+  const youthNotice = h("p", { class: "youth-inline-note", text: "Ben je jonger dan 18? Bespreek je schema en trainingsbelasting met je ouder/verzorger en jeugdtrainer." });
   const error = h("p", { class: "error", role: "alert" });
   const status = h("p", { class: "muted", role: "status" });
 
-  const doel = h("input", { type: "text", maxlength: 200, required: true, placeholder: "Bijvoorbeeld: toertocht van 120 km, of fitter worden", value: p.doel || "" });
+  const doel = h("input", { type: "text", name: "goal", maxlength: 200, required: true, placeholder: "Bijvoorbeeld: mijn eerste wedstrijd rijden", value: p.doel || "" });
   const birthDate = h("input", {
     type: "date", name: "geboortedatum", min: "1900-01-01", max: todayIso(), required: true,
     value: savedProfile.birth_date || ""
   });
   const datum = h("input", { type: "date", min: addDays(todayIso(), 7), value: p.datum || "" });
-  const niveau = h("select", {}, ...[["beginner", "Beginner"], ["gevorderd", "Gevorderd"], ["ervaren", "Ervaren"], ["wedstrijd", "Wedstrijdrenner"]]
+  const niveau = h("select", { required: true }, ...[["beginner", "Beginner"], ["gevorderd", "Gevorderd"], ["ervaren", "Ervaren"], ["wedstrijd", "Wedstrijdrenner"]]
     .map(([v, t]) => h("option", { value: v, selected: (p.niveau || "gevorderd") === v, text: t })));
   const uren = h("input", { type: "number", min: 2, max: 25, step: 0.5, required: true, value: p.uren_per_week ?? 6 });
   const defaultMeter = savedProfile.meter || p.meter || "";
@@ -300,7 +340,57 @@ function viewIntake(prefill) {
   const jaren = h("input", { type: "number", min: 0, max: 60, placeholder: "Optioneel", value: p.ervaring_jaren ?? "" });
   const beperkingen = h("textarea", { rows: 2, maxlength: 300, placeholder: "Optioneel, bijvoorbeeld een oude blessure. Vul alleen in wat je kwijt wilt." }, p.beperkingen || "");
   const opmerkingen = h("textarea", { rows: 2, maxlength: 400, placeholder: "Optioneel, bijvoorbeeld: ik werk onregelmatig of train vooral buiten." }, p.opmerkingen || "");
-  const submit = h("button", { class: "btn", type: "submit", text: "Volgende: vragen van de coach" });
+  const stepNames = ["Doel", "Tijd", "Training"];
+  let currentStep = 0;
+  const progressItems = stepNames.map((name, index) => h("li", {
+    class: `wizard-progress-item${index === 0 ? " active" : ""}`,
+    "aria-current": index === 0 ? "step" : null
+  }, h("span", { class: "wizard-progress-number", text: String(index + 1) }), h("span", { text: name })));
+  const progress = h("ol", { class: "wizard-progress", "aria-label": "Voortgang nieuw schema" }, ...progressItems);
+  const submit = h("button", { class: "btn", type: "submit", text: "Verder naar vragen van de coach" });
+  const back = h("button", { class: "btn ghost", type: "button", text: "Vorige stap", hidden: true });
+  const next = h("button", { class: "btn", type: "button", text: "Volgende" });
+  const panels = [
+    h("section", { class: "wizard-panel stack" },
+      h("h2", { text: "1. Jouw doel" }),
+      h("p", { class: "muted", text: "Vertel waar je naartoe wilt werken en op welk niveau je fietst." }),
+      field("Wat wil je bereiken?", doel),
+      field("Geboortedatum", birthDate, "Je leeftijd helpt de coach het schema af te stemmen. Alleen je leeftijd, niet je geboortedatum, wordt met de AI gedeeld."),
+      youthNotice,
+      field("Heb je een datum voor je doel?", datum, "Optioneel. Zonder datum maakt de coach een schema van ongeveer 8 weken."),
+      field("Hoe zou je je niveau omschrijven?", niveau)),
+    h("section", { class: "wizard-panel stack", hidden: true },
+      h("h2", { text: "2. Jouw tijd" }),
+      h("p", { class: "muted", text: "Kies alleen dagen en uren die echt in je week passen. Rust hoort ook bij trainen." }),
+      field("Hoeveel uur per week kun je meestal trainen?", uren, "Dit is een bovengrens, geen doel dat je moet halen."),
+      h("fieldset", { class: "days" }, h("legend", { text: "Op welke dagen kun je meestal trainen? (minimaal 2)" }),
+        ...dagenChecks.map(d => h("label", { class: "daybox" }, d.box, h("span", { text: d.naam })))),
+      h("p", { class: "youth-inline-note", text: "Voor jeugdrenners: laat een ouder/verzorger en jeugdtrainer meekijken naar de trainingsweek." })),
+    h("section", { class: "wizard-panel stack", hidden: true },
+      h("h2", { text: "3. Jouw training" }),
+      h("p", { class: "muted", text: "Meetapparatuur en trainingservaring helpen de coach, maar je kunt het later altijd aanpassen." }),
+      field("Welke meetapparatuur gebruik je?", meter),
+      equipment.element,
+      field("Jaren ervaring", jaren, "Optioneel."),
+      field("Zijn er beperkingen waar de coach rekening mee moet houden?", beperkingen, "Optioneel. Deel alleen wat nodig is; dit is geen medische beoordeling."),
+      field("Nog iets dat helpt om je schema te maken?", opmerkingen, "Optioneel."),
+      h("p", { class: "tip", text: "Wil je je eerdere ritten gebruiken? Je kunt TrainingPeaks-gegevens importeren via de zijbalk." }))
+  ];
+
+  function renderStep(index) {
+    currentStep = index;
+    panels.forEach((panel, i) => { panel.hidden = i !== index; });
+    progressItems.forEach((item, i) => {
+      item.className = `wizard-progress-item${i === index ? " active" : i < index ? " complete" : ""}`;
+      if (i === index) item.setAttribute("aria-current", "step");
+      else item.removeAttribute("aria-current");
+    });
+    back.hidden = index === 0;
+    next.hidden = index === panels.length - 1;
+    submit.hidden = index !== panels.length - 1;
+    error.textContent = "";
+    window.scrollTo(0, 0);
+  }
 
   function collect() {
     return {
@@ -314,11 +404,69 @@ function viewIntake(prefill) {
     };
   }
 
+  function validateStep(index) {
+    if (index === 0) {
+      if (!doel.value.trim() || doel.value.trim().length < 3) {
+        error.textContent = "Beschrijf je doel in minimaal 3 tekens.";
+        doel.focus();
+        return false;
+      }
+      if (!birthDate.value || birthDate.value >= todayIso()) {
+        error.textContent = "Vul je geldige geboortedatum in.";
+        birthDate.focus();
+        return false;
+      }
+      if (!niveau.value) {
+        error.textContent = "Kies je niveau.";
+        niveau.focus();
+        return false;
+      }
+    }
+    if (index === 1) {
+      const hours = Number(uren.value);
+      if (!Number.isFinite(hours) || hours < 2 || hours > 25) {
+        error.textContent = "Vul 2 tot en met 25 uur per week in.";
+        uren.focus();
+        return false;
+      }
+      if (dagenChecks.filter(day => day.box.checked).length < 2) {
+        error.textContent = "Kies minstens twee dagen waarop je kunt trainen.";
+        return false;
+      }
+    }
+    if (index === 2) {
+      if (!meter.value) {
+        error.textContent = "Kies een optie bij meetapparatuur. Geen meetapparatuur is ook een optie.";
+        meter.focus();
+        return false;
+      }
+      if (["heart_rate", "both"].includes(meter.value) && (!equipment.values().hr_max || !equipment.values().hr_threshold)) {
+        error.textContent = "Vul je maximale en drempelhartslag in.";
+        return false;
+      }
+      if (["power", "both"].includes(meter.value) && !equipment.values().ftp) {
+        error.textContent = "Vul je FTP (drempelvermogen) in.";
+        return false;
+      }
+    }
+    error.textContent = "";
+    return true;
+  }
+
+  back.addEventListener("click", () => renderStep(Math.max(0, currentStep - 1)));
+  next.addEventListener("click", () => {
+    if (validateStep(currentStep)) renderStep(Math.min(panels.length - 1, currentStep + 1));
+  });
+
   const form = h("form", {
-    class: "card stack",
+    class: "card stack wizard",
+    novalidate: true,
     onsubmit: async (event) => {
       event.preventDefault();
       error.textContent = "";
+      for (let index = 0; index < panels.length; index++) {
+        if (!validateStep(index)) { renderStep(index); return; }
+      }
       const intake = collect();
       const done = busyButton(submit, "", status);
       status.textContent = "De coach bekijkt je gegevens…";
@@ -329,23 +477,14 @@ function viewIntake(prefill) {
       } catch (e) { error.textContent = e.message; done(); }
     }
   },
-  h("h2", { text: "Jouw doel en situatie" }),
-  field("Wat is je doel?", doel),
-  field("Geboortedatum", birthDate, "Je leeftijd helpt de coach je schema af te stemmen. Alleen je leeftijd, niet je geboortedatum, wordt met de AI gedeeld."),
-  field("Datum van je doel", datum, "Optioneel. Zonder datum maak ik een schema van 8 weken."),
-  h("div", { class: "grid2" }, field("Niveau", niveau), field("Uren per week (maximaal)", uren)),
-  field("Welke meetapparatuur gebruik je?", meter),
-  equipment.element,
-  h("fieldset", { class: "days" }, h("legend", { text: "Op welke dagen kun je trainen?" }),
-    ...dagenChecks.map(d => h("label", { class: "daybox" }, d.box, h("span", { text: d.naam })))),
-  field("Jaren ervaring", jaren),
-  field("Beperkingen of klachten", beperkingen),
-  field("Overige opmerkingen", opmerkingen),
-  h("p", { class: "tip", text: "Wil je je eerdere ritten gebruiken? Je kunt TrainingPeaks-gegevens importeren via de zijbalk." }),
-  error, status, submit
+  progress,
+  ...panels,
+  error, status,
+  h("div", { class: "row wizard-actions" }, back, next, submit)
   );
 
-  show(h("h1", { text: "Nieuw schema" }), form);
+  show(h("h1", { text: "Nieuw schema" }), h("p", { class: "muted wizard-intro", text: "We doen dit stap voor stap. Je hoeft niet alles al precies te weten." }), form);
+  renderStep(0);
 }
 
 function viewImport() {
@@ -792,6 +931,9 @@ function viewPlan() {
     h("div", { class: "dashboard-heading" },
       h("p", { class: "eyebrow", text: "JOUW TRAININGSDASHBOARD" }),
       h("h1", { text: plan.intake.doel })),
+    plan.intake.leeftijd < 18 ? h("section", { class: "youth-notice" },
+      h("h2", { text: "Jeugdrenner: train met begeleiding" }),
+      h("p", { text: "Bespreek dit schema en je trainingsbelasting met je ouder/verzorger en een gekwalificeerde jeugdtrainer. De AI-coach is geen vervanging voor professionele begeleiding." })) : null,
     h("section", { class: "card stack" },
       h("p", { text: plan.summary }),
       h("p", { class: "muted", text: `${plan.total_weeks} weken, start ${dateLabel(plan.start_date)}. Je ziet steeds één week in detail; de volgende week maakt de coach nadat je hebt teruggemeld hoe het ging.` }),
@@ -1086,7 +1228,7 @@ async function start() {
       viewPlan();
     } else viewIntake();
   } catch (e) {
-    if (e.status === 401) { state.user = null; viewAuth("login"); }
+    if (e.status === 401) { state.user = null; state.data = null; viewHome(); }
     else show(h("p", { class: "error", text: e.message }));
   }
 }

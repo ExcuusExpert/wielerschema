@@ -31,6 +31,7 @@ let groqCalls = 0;
 let groqMode = "ok";
 let coachMode = "proposal";
 let lastGroqPrompt = "";
+let lastGroqSystemPrompt = "";
 const realFetch = globalThis.fetch;
 function weekJson({ minutes = 240, allDays = true } = {}) {
   const dagen = [];
@@ -45,6 +46,7 @@ globalThis.fetch = async (url, init) => {
   if (groqMode === "busy") return new Response("{}", { status: 429 });
   const prompt = JSON.parse(init.body).messages[1].content;
   lastGroqPrompt = prompt;
+  lastGroqSystemPrompt = JSON.parse(init.body).messages[0].content;
   let content;
   if (groqMode === "garbage") content = "Dit is geen JSON";
   else if (prompt.includes("vervolgvragen")) content = JSON.stringify({ vragen: [{ vraag: "Hoeveel uur train je nu per week?" }, { vraag: "Heb je ervaring met intervallen?" }] });
@@ -193,6 +195,28 @@ test("intake: ongeldige invoer wordt netjes geweigerd", async () => {
   assert.equal(await bad({ datum: "morgen" }), 400);
   assert.equal(await bad({ geboortedatum: "" }), 400);
   assert.equal(await bad({ meter: "heart_rate" }), 400);
+});
+
+test("jeugdrenners vanaf 12 jaar kunnen een schema aanvragen en krijgen leeftijdsbewuste coachinstructies", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env, "jeugdfietser");
+  const birthDateForAge = age => {
+    const date = new Date();
+    date.setUTCFullYear(date.getUTCFullYear() - age);
+    date.setUTCDate(date.getUTCDate() - 1);
+    return date.toISOString().slice(0, 10);
+  };
+  const tooYoung = await api(env, "POST", "/api/intake/questions", {
+    intake: { ...INTAKE, geboortedatum: birthDateForAge(11) }
+  }, { cookie });
+  assert.equal(tooYoung.status, 400);
+
+  const youth = await api(env, "POST", "/api/intake/questions", {
+    intake: { ...INTAKE, geboortedatum: birthDateForAge(12) }
+  }, { cookie });
+  assert.equal(youth.status, 200, JSON.stringify(youth.data));
+  assert.ok(lastGroqPrompt.includes('"leeftijd":12'));
+  assert.ok(lastGroqSystemPrompt.includes("ouder/verzorger en gekwalificeerde jeugdtrainer"));
 });
 
 test("profiel bewaart geboortedatum en zones, maar deelt alleen leeftijd met Groq", async () => {

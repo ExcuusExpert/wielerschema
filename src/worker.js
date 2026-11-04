@@ -63,6 +63,7 @@ const SYSTEM_COACH =
   "Een schema is geen medisch advies; bij pijn, blessures, ziekte of ongewone klachten adviseer je rust en een arts of fysiotherapeut. " +
   "Bouw rustig op: verhoog het weekvolume met hooguit ongeveer 10 procent per week en plan elke derde of vierde week een herstelweek. " +
   "Hou je voor de gewone trainingsopbouw aan de beschikbare dagen en het maximale aantal uren per week. Een concrete, door de gebruiker genoemde clubrit of wedstrijd mag op de genoemde dag worden toegevoegd; houd wel de weeklimiet aan. " +
+  "Als de sporter jonger dan 18 is: wees extra terughoudend en leeftijdsbewust, stel gezondheid, plezier, techniek en herstel voorop, voorkom druk om af te vallen of te presteren, verzin geen trainingsbelasting en adviseer het schema met ouder/verzorger en gekwalificeerde jeugdtrainer te bespreken. " +
   "Gebruik zones Z1 tot en met Z6 (Z1 herstel, Z2 duur, Z3 tempo, Z4 drempel, Z5 VO2max, Z6 sprint) en noem altijd een gevoel (RPE 1-10). Gebruik opgegeven persoonlijke hartslag- en vermogenszones en drempelwaarden; verzin ze niet als ze ontbreken. Zonegrenzen zijn de bovengrenzen van Z1 tot en met Z6. Noem alleen wattages als de FTP is opgegeven. " +
   "De gebruiker kan handmatige slaap-, rusthartslag-, Body Battery-, stress- en HRV-waarden delen. Bespreek alleen mogelijke trends voorzichtig en stel nooit een medische diagnose of risicoscore. Een concrete trainingswijziging pas je direct toe als de gebruiker duidelijk vraagt die in het schema te zetten; bij een vrijblijvende vraag blijft het een voorstel ter bevestiging. " +
   "Verzin geen gegevens over de gebruiker. " +
@@ -214,7 +215,7 @@ function cleanProfile(raw, meter) {
   const birthDate = raw.geboortedatum ?? raw.birth_date;
   if (!parseDate(birthDate) || birthDate >= today()) return { error: "Vul je geldige geboortedatum in." };
   const age = userAge(birthDate);
-  if (age < 13 || age > 100) return { error: "Voor een trainingsschema moet je leeftijd tussen 13 en 100 jaar liggen." };
+  if (age < 12 || age > 100) return { error: "Voor een trainingsschema moet je leeftijd tussen 12 en 100 jaar liggen." };
   const usesHr = ["heart_rate", "both"].includes(meter);
   const usesPower = ["power", "both"].includes(meter);
   const hrMax = usesHr ? cleanNum(raw.hr_max, 60, 240) : null;

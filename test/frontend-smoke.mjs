@@ -50,6 +50,8 @@ class El {
   removeChild(c) { this.children = this.children.filter(x => x !== c); return c; }
   remove() { if (this.parent) this.parent.removeChild(this); }
   setAttribute(k, v) { this.attrs[k] = v; if (k === "value") this._value = String(v); if (k === "checked") this.checked = true; }
+  removeAttribute(k) { delete this.attrs[k]; }
+  focus() {}
   getAttribute(k) { return this.attrs[k] ?? null; }
   addEventListener(t, fn) { (this.listeners[t] ||= []).push(fn); }
   click() { for (const fn of this.listeners.click || []) fn({ preventDefault() {} }); }
@@ -89,20 +91,35 @@ const tick = () => new Promise(r => setTimeout(r, 80));
 const text = () => root.app.textContent;
 const ok = (cond, msg) => { if (!cond) { console.error("MISLUKT:", msg, "\nScherm:", text().slice(0, 300)); process.exit(1); } console.log("ok:", msg); };
 const submit = async (form) => { for (const fn of form.listeners.submit || []) await fn({ preventDefault() {} }); await tick(); await tick(); };
+const youthBirthDate = new Date();
+youthBirthDate.setUTCFullYear(youthBirthDate.getUTCFullYear() - 17);
 
 vm.runInContext(fs.readFileSync("public/app.js", "utf8"), sandbox, { filename: "app.js" });
 await tick();
-ok(text().includes("Inloggen") && text().includes("Een trainingsschema dat met je meegroeit"), "inlogscherm zichtbaar voor een bezoeker");
+ok(text().includes("Jouw wielerdoel") && text().includes("Maak mijn schema") && text().includes("Jeugdrenner?"), "publieke startpagina zichtbaar voor een bezoeker");
 
-find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Maak er een")[0].click();
+find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Maak mijn schema")[0].click();
+ok(text().includes("Account maken") && text().includes("Terug naar startpagina"), "registreerscherm is bereikbaar vanaf de startpagina");
 ok(text().includes("Account maken"), "registreerscherm");
 const inputs = find(root.app, e => e.tagName === "INPUT");
 inputs.find(i => i.attrs.name === "username").value = "hessel";
 inputs.find(i => i.attrs.name === "password").value = "een-lang-wachtwoord";
 inputs.find(i => i.attrs.name === "consent").checked = true;
 await submit(find(root.app, e => e.tagName === "FORM")[0]);
-ok(text().includes("Jouw doel en situatie"), "na registreren: intakeformulier");
-ok(text().includes("Welke meetapparatuur gebruik je?") && text().includes("TrainingPeaks-gegevens importeren"), "meterkeuze en route naar TrainingPeaks-import zichtbaar");
+ok(text().includes("Jouw doel") && find(root.app, e => e.className === "wizard-progress").length === 1, "na registreren: eerste stap van de wizard");
+ok(text().includes("Geboortedatum") && text().includes("ouder/verzorger"), "geboortedatum en jeugdbegeleiding worden helder uitgelegd");
+find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "goal")[0].value = "Toertocht van 120 km";
+find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Volgende")[0].click();
+ok(text().includes("Vul je geldige geboortedatum in"), "wizard controleert geboortedatum voor doorgaan");
+find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "geboortedatum")[0].value = youthBirthDate.toISOString().slice(0, 10);
+find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Volgende")[0].click();
+ok(text().includes("2. Jouw tijd"), "wizard gaat door naar beschikbare tijd");
+find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Volgende")[0].click();
+ok(text().includes("3. Jouw training") && text().includes("TrainingPeaks-gegevens"), "wizard gaat door naar trainingsgegevens");
+find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Vorige stap")[0].click();
+ok(text().includes("2. Jouw tijd") && find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "goal")[0].value === "Toertocht van 120 km", "vorige stap behoudt ingevulde antwoorden");
+find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Volgende")[0].click();
+ok(text().includes("Welke meetapparatuur gebruik je?"), "meetapparatuur staat in de laatste stap");
 const meter = find(root.app, e => e.tagName === "SELECT")[1];
 const chooseMeter = value => {
   for (const option of meter.children) delete option.attrs.selected;
@@ -110,7 +127,6 @@ const chooseMeter = value => {
   for (const listener of meter.listeners.change || []) listener();
 };
 chooseMeter("heart_rate");
-find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "geboortedatum")[0].value = "1990-06-15";
 find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "hr_max")[0].value = "190";
 find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "hr_threshold")[0].value = "170";
 chooseMeter("both");
@@ -119,8 +135,6 @@ ok(find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "hr_max")[0].va
   "meterkeuze toont beide kalibraties zonder ingevulde hartslaggegevens te wissen");
 find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "ftp")[0].value = "220";
 
-const doel = find(root.app, e => e.tagName === "INPUT" && e.attrs.type === "text")[0];
-doel.value = "Toertocht van 120 km";
 await submit(find(root.app, e => e.tagName === "FORM")[0]);
 ok(text().includes("Vragen van de coach") && text().includes("Hoeveel uur train je nu?"), "eerste coachvraag in chat getoond");
 
@@ -130,6 +144,7 @@ ok(text().includes("Hoeveel uur train je nu?") && text().includes("Heb je ervari
 find(root.app, e => e.tagName === "TEXTAREA")[0].value = "Ja, een beetje";
 await submit(find(root.app, e => e.tagName === "FORM")[0]);
 ok(text().includes("Toertocht van 120 km") && text().includes("Week 1") && text().includes("Rustige opbouw"), "schema getoond met week 1");
+ok(text().includes("Jeugdrenner: train met begeleiding"), "jeugdrenner krijgt een blijvende begeleidingsmelding bij het schema");
 ok(find(root.app, e => e.className.includes("day")).length >= 7, "zeven dagkaarten");
 ok(!text().includes("Hoeveel van het schema heb je gedaan?"), "oude weekcheck-in met formulier is verwijderd");
 ok(text().includes("Dagmetingen en analyse bekijken") && text().includes("Kopieer prompt voor TrainingPeaks AI"), "herstelmetingen en TrainingPeaks-workoutprompt zichtbaar");

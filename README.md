@@ -7,6 +7,9 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 ## Wat kan het nu
 
 - Account maken en inloggen (gebruikersnaam en wachtwoord, geen e-mail nodig).
+- Publieke startpagina met uitleg en aparte keuzes om in te loggen of een account te maken.
+- Intakewizard in drie stappen: doel, geboortedatum en niveau; trainingstijd en dagen; meetapparatuur, beperkingen en overige trainingservaring.
+- Jeugdrenners van 12–17 krijgen terughoudender coachinstructies en een zichtbare oproep om een ouder/verzorger en jeugdtrainer mee te laten kijken.
 - Intake: doel, datum, niveau, uren per week, beschikbare dagen, ervaring en beperkingen. Een geboortedatum is verplicht; alleen de berekende leeftijd gaat naar Groq.
 - Keuze uit vermogensmeter, hartslagmeter, beide of geen van beide. Voor hartslagtraining vul je maximale en drempelhartslag in; voor vermogen je FTP. Per gekozen meetmethode kun je de zes zonegrenzen aanpassen. De voorgestelde startzones zijn schattingen op basis van gangbare percentages, geen medisch advies of vervanging van een test.
 - TrainingPeaks-exporten (ZIP met FIT/CSV) importeren; gegevens ouder dan 365 dagen worden genegeerd. Alleen weektotalen en meetwaardegemiddelden worden bewaard; de ruwe bestanden niet.
@@ -33,6 +36,7 @@ Nog niet: wachtwoord vergeten (er is geen e-mail), automatische koppeling met Ga
 - ZIP-uploads zijn beperkt tot 20 MB en worden alleen in het geheugen verwerkt. Geïmporteerde samenvattingen kunnen eigen meetwaarden bevatten en worden, net als de intake, naar Groq gestuurd om het schema te maken.
 - Coachberichten worden bewaard (maximaal 100 per account). De chat gebruikt recente berichten als gesprekscontext; de server controleert elke voorgestelde aanpassing voordat die wordt opgeslagen.
 - Dagmetingen zijn handmatige invoer, geen Garmin-koppeling. De 14 meest recente metingen kunnen als context met Groq worden gedeeld wanneer je de coach gebruikt; metingen worden in je account bewaard totdat je het account verwijdert en zijn beschikbaar in je gegevensdownload.
+- De opgegeven leeftijd wordt bij de intake gevalideerd; de coach krijgt voor sporters jonger dan 18 extra, voorzichtige instructies. De openbare inzet voor minderjarigen en de privacy-/toestemmingseisen moeten vóór lancering apart juridisch worden beoordeeld; deze versie vraagt geen afzonderlijke ouderbevestiging.
 
 ## Uitrollen op Cloudflare
 
