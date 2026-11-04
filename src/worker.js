@@ -901,41 +901,34 @@ async function coachChat(request, env, user) {
   const now = Date.now();
   const messageId = randomHex(12);
   const suggestionId = result.value.voorstel ? randomHex(12) : null;
-  const userAskedToApply = /erop zetten|erin zetten|(?:zet|plan|voeg|verplaats|pas).{0,60}(?:in het schema|op (?:maandag|dinsdag|woensdag|donderdag|vrijdag|zaterdag|zondag)|toe|aan)|maak.{0,60}(?:training|rit).{0,30}(?:lichter|rustiger|korter)/i.test(userContext);
-  const applied = Boolean(result.value.voorstel && userAskedToApply);
   const proposal = result.value.voorstel;
-  const updatedWeek = applied ? {
-    ...week,
-    dagen: week.dagen.map(day => day.dag === proposal.dag ? { ...day, ...proposal } : day),
-    totaal_minuten: week.totaal_minuten -
-      (week.dagen.find(day => day.dag === proposal.dag)?.type === "rust" ? 0 : (week.dagen.find(day => day.dag === proposal.dag)?.minuten || 0)) +
-      proposal.minuten
+  const suggestionWorkout = proposal ? {
+    ...proposal,
+    huidige: week.dagen.find(day => day.dag === proposal.dag)
   } : null;
   const answer = updatedPlan
     ? `Dank voor je terugblik. Ik heb week ${updatedPlan.weeks[updatedPlan.weeks.length - 1].week_no} voor je gemaakt.`
-    : applied
-      ? `Ik heb ${proposal.titel} op ${DAG_NAMEN[proposal.dag]} in je schema gezet.`
+    : proposal
+      ? `Ik heb een wijzigingsvoorstel voor ${DAG_NAMEN[proposal.dag]} klaargezet. Bekijk de wijziging hieronder en kies of je die wilt toepassen.`
       : result.value.antwoord;
   const statements = [];
   statements.push(
     env.DB.prepare("INSERT INTO coach_messages (id, user_id, week_no, day_no, role, content, updated, created_at) VALUES (?, ?, ?, ?, 'user', ?, 0, ?)")
       .bind(randomHex(12), user.id, weekNo, dayNo, message, now),
-    env.DB.prepare("INSERT INTO coach_messages (id, user_id, week_no, day_no, role, content, updated, created_at) VALUES (?, ?, ?, ?, 'assistant', ?, ?, ?)")
-      .bind(messageId, user.id, weekNo, proposal?.dag ?? dayNo, answer, applied ? 1 : 0, now + 1),
+    env.DB.prepare("INSERT INTO coach_messages (id, user_id, week_no, day_no, role, content, updated, created_at) VALUES (?, ?, ?, ?, 'assistant', ?, 0, ?)")
+      .bind(messageId, user.id, weekNo, proposal?.dag ?? dayNo, answer, now + 1),
     ...(suggestionId ? [env.DB.prepare(
       "INSERT INTO coach_suggestions (id, user_id, message_id, week_no, day_no, workout, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    ).bind(suggestionId, user.id, messageId, weekNo, proposal.dag, JSON.stringify(proposal), applied ? "applied" : "pending", now + 1)] : []),
-    ...(updatedWeek ? [env.DB.prepare("UPDATE weeks SET detail = ? WHERE user_id = ? AND week_no = ?")
-      .bind(JSON.stringify(updatedWeek), user.id, weekNo)] : []),
+    ).bind(suggestionId, user.id, messageId, weekNo, proposal.dag, JSON.stringify(suggestionWorkout), "pending", now + 1)] : []),
     env.DB.prepare("DELETE FROM coach_messages WHERE user_id = ? AND id NOT IN (SELECT id FROM coach_messages WHERE user_id = ? ORDER BY created_at DESC LIMIT 100)")
       .bind(user.id, user.id)
   );
   await env.DB.batch(statements);
   return json({
     antwoord: answer,
-    aangepast: applied,
+    aangepast: false,
     plan_updated: Boolean(updatedPlan),
-    voorstel: suggestionId ? { id: suggestionId, workout: proposal, status: applied ? "applied" : "pending" } : null
+    voorstel: suggestionId ? { id: suggestionId, workout: suggestionWorkout, status: "pending" } : null
   });
 }
 
@@ -963,9 +956,19 @@ async function handleCoachSuggestion(request, env, user) {
   if (!plan || !weekRow) return json({ error: "not_found", message: "Het bijbehorende schema bestaat niet meer." }, 404);
   const intake = JSON.parse(plan.intake);
   const week = JSON.parse(weekRow.detail);
-  const workout = JSON.parse(suggestion.workout);
+  const storedWorkout = JSON.parse(suggestion.workout);
+  const workout = {
+    type: storedWorkout.type,
+    minuten: storedWorkout.minuten,
+    zone: storedWorkout.zone,
+    titel: storedWorkout.titel,
+    beschrijving: storedWorkout.beschrijving
+  };
   const original = week.dagen.find(day => day.dag === suggestion.day_no);
   if (!original) return json({ error: "invalid_day", message: "Deze trainingsdag bestaat niet meer." }, 409);
+  if (storedWorkout.huidige && JSON.stringify(original) !== JSON.stringify(storedWorkout.huidige)) {
+    return json({ error: "stale", message: "Deze training is intussen veranderd. Ververs het schema en vraag zo nodig een nieuw voorstel." }, 409);
+  }
   if (week.waarschuwing && !(
     workout.type === "rust" || (["duurrit", "herstelrit"].includes(workout.type) && ["Z1", "Z2"].includes(workout.zone))
   )) return json({ error: "invalid", message: "Dit voorstel kan niet worden toegepast vanwege de herstelwaarschuwing." }, 409);

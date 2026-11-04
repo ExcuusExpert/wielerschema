@@ -178,6 +178,8 @@ fieldset.days legend { padding: 0 6px; font-weight: 600; font-size: .92rem; }
 .wellness-value { padding: 4px 8px; border-radius: 999px; background: var(--card2); color: var(--muted); font-size: .78rem; }
 .suggestion-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid #d5e1cb; border-radius: 12px; background: #f6f9f3; }
 .suggestion-card .row { margin-top: 4px; }
+.suggestion-comparison { padding: 10px; border-radius: 9px; background: rgb(0 0 0 / 3%); }
+.suggestion-arrow { text-align: center; font-size: 1.15rem; color: var(--accent); }
 .import-summary-card { border-left: 4px solid var(--accent); }
 .daily-metrics-promo { background: #fbfcfa; }
 input[type=text], input[type=password], input[type=number], input[type=date], select, textarea, input[type=file] { color: var(--text); background: #fff; border-color: #d7dfd7; }

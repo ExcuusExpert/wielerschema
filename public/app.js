@@ -632,12 +632,22 @@ function coachChat(plan, currentWeek) {
         h("p", { class: "chat-bubble", text: item.content }),
         item.updated ? h("span", { class: "hint", text: "Training bijgewerkt" }) : null,
         item.suggestion ? h("section", { class: "suggestion-card" },
-          h("strong", { text: `${TYPE_LABEL[item.suggestion.workout.type] || "Training"} · ${minutesText(item.suggestion.workout.minuten)}` }),
+          h("strong", { text: `Voorstel voor ${DAGEN_KORT[item.suggestion.workout.dag] || "training"}` }),
+          item.suggestion.workout.huidige ? h("div", { class: "suggestion-comparison" },
+            h("p", { class: "hint", text: "Huidige training" }),
+            h("p", { text: `${TYPE_LABEL[item.suggestion.workout.huidige.type] || "Training"}${item.suggestion.workout.huidige.type === "rust" ? "" : ` · ${minutesText(item.suggestion.workout.huidige.minuten)}`}` }),
+            h("p", { text: item.suggestion.workout.huidige.titel }),
+            item.suggestion.workout.huidige.zone ? h("p", { class: "muted", text: item.suggestion.workout.huidige.zone }) : null,
+            item.suggestion.workout.huidige.beschrijving ? h("p", { class: "muted", text: item.suggestion.workout.huidige.beschrijving }) : null,
+            h("p", { class: "suggestion-arrow", "aria-hidden": "true", text: "↓" })) : null,
+          h("p", { class: "hint", text: "Voorgestelde training" }),
+          h("strong", { text: `${TYPE_LABEL[item.suggestion.workout.type] || "Training"}${item.suggestion.workout.type === "rust" ? "" : ` · ${minutesText(item.suggestion.workout.minuten)}`}` }),
           h("p", { text: item.suggestion.workout.titel }),
+          item.suggestion.workout.zone ? h("p", { class: "muted", text: item.suggestion.workout.zone }) : null,
           h("p", { class: "muted", text: item.suggestion.workout.beschrijving }),
           item.suggestion.status === "pending"
             ? h("div", { class: "row" },
-              h("button", { class: "btn small", type: "button", text: "Pas training aan", onclick: () => resolveSuggestion(item.suggestion.id, "apply") }),
+              h("button", { class: "btn small", type: "button", text: "Voorstel toepassen", onclick: () => resolveSuggestion(item.suggestion.id, "apply") }),
               h("button", { class: "btn ghost small", type: "button", text: "Niet toepassen", onclick: () => resolveSuggestion(item.suggestion.id, "dismiss") }))
             : h("p", { class: "hint", text: item.suggestion.status === "applied" ? "Training aangepast" : "Voorstel niet toegepast" })) : null));
     }
@@ -721,7 +731,7 @@ function coachChat(plan, currentWeek) {
     ...["Leg deze training uit", "Maak deze training lichter"].map(text =>
       h("button", { class: "prompt-chip", type: "button", text, onclick: () => { input.value = `${text}.`; input.focus(); } }))),
   h("div", { class: "chat-composer" }, input, submit),
-  h("p", { class: "hint", text: "Je berichten worden bewaard. Als je vraagt iets te plannen, zet de coach dat direct in je schema." }),
+  h("p", { class: "hint", text: "Je berichten worden bewaard. De coach laat een wijzigingsvoorstel eerst zien; je schema verandert pas als je het toepast." }),
   error, status);
   loadThread();
   return h("section", { id: "coach-chat", class: "card stack coach-panel", "aria-labelledby": "coach-chat-title" },

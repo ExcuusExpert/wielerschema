@@ -16,7 +16,7 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 - Kopieer per workout een TrainingPeaks AI-prompt met passende hartslag-, vermogens- of RPE-doelen. Dit is geen automatische koppeling met TrainingPeaks.
 - Na afloop vraagt de coach in de chat hoe je week ging; op basis van je antwoord maakt die de volgende week.
 - Dashboard met analyse van geïmporteerde trainingsweken en handmatige dagelijkse herstelmetingen (rusthartslag, slaap, Body Battery, stress en HRV; maximaal één jaar terug).
-- De coach kan mogelijke veranderingen in herstelwaarden bespreken, maar stelt geen medische diagnose. Een concrete opdracht om een training in het schema te zetten wordt na servervalidatie direct verwerkt; bij een vrijblijvende vraag blijft het een voorstel ter bevestiging.
+- De coach kan mogelijke veranderingen in herstelwaarden bespreken, maar stelt geen medische diagnose. Elke voorgestelde wijziging aan een training verschijnt eerst ter beoordeling en wordt pas na bevestiging toegepast.
 - Schema van een week downloaden als agenda (.ics).
 - Onder Account kun je je geboortedatum, meetapparatuur en trainingszones aanpassen, je gebruikersnaam of wachtwoord wijzigen, je gegevens downloaden en je account verwijderen.
 - Privacyverklaring.

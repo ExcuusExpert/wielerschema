@@ -177,7 +177,14 @@ coachForm = find(root.app, e => e.tagName === "FORM" &&
 find(coachForm, e => e.tagName === "TEXTAREA")[0].value = "Ik weet nog niet welke zones en intensiteiten, dus laat dat leeg.";
 await submit(coachForm);
 await tick();
-ok(text().includes("Ik heb MTB-rit met de club op zaterdag in je schema gezet."), "duidelijke planningsopdracht wordt direct toegepast");
+ok(text().includes("Ik heb een wijzigingsvoorstel voor zaterdag klaargezet.") &&
+  text().includes("Huidige training") && text().includes("Voorgestelde training") &&
+  text().includes("Voorstel toepassen"), "coach toont eerst het huidige en voorgestelde schema");
+const approveButton = find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Voorstel toepassen")[0];
+for (const listener of approveButton.listeners.click || []) await listener({ preventDefault() {} });
+await tick();
+await tick();
+ok(text().includes("Training aangepast"), "coachwijziging wordt pas na bevestigen toegepast");
 const afterApply = await (await sandbox.fetch("/api/plan")).json();
 const saturday = afterApply.weeks[0].dagen.find(day => day.dag === 5);
 ok(saturday.type === "mtb" && saturday.titel === "MTB-rit met de club" && saturday.zone === "" && saturday.beschrijving === "Intensiteit en trainingszone zijn nog open.", "MTB-rit staat op zaterdag met lege intensiteit");
