@@ -54,6 +54,7 @@ globalThis.fetch = async (url, init) => {
 };
 
 // --- minimale DOM ---
+const downloads = [];
 class TextNode { constructor(t) { this.nodeType = 3; this.data = t; } get textContent() { return this.data; } }
 class El {
   constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.attrs = {}; this.listeners = {}; this.className = ""; this.disabled = false; this._value = undefined; this.checked = false;
@@ -68,7 +69,7 @@ class El {
   focus() {}
   getAttribute(k) { return this.attrs[k] ?? null; }
   addEventListener(t, fn) { (this.listeners[t] ||= []).push(fn); }
-  click() { for (const fn of this.listeners.click || []) fn({ preventDefault() {} }); }
+  click() { if (this.attrs.download) downloads.push(this.attrs.download); for (const fn of this.listeners.click || []) fn({ preventDefault() {} }); }
   get textContent() { return this.children.map(c => c.textContent).join(""); }
   set textContent(v) { this.children = [new TextNode(String(v))]; }
   get value() {
@@ -92,7 +93,21 @@ const sandbox = {
     return globalThis.setTimeout(callback, delay === 3000 ? 100 : delay);
   },
   URL: { createObjectURL: () => "blob:x" }, Blob: class {},
-  document: { getElementById: (id) => ({ app: root.app, nav: root.nav, "sidebar-account": root.account, "coach-launcher": root.launcher })[id], createElement: (t) => new El(t), createTextNode: (t) => new TextNode(t), body: new El("body") },
+  document: {
+    getElementById: (id) => ({ app: root.app, nav: root.nav, "sidebar-account": root.account, "coach-launcher": root.launcher })[id],
+    createElement: (tag) => {
+      const el = new El(tag);
+      if (tag === "canvas") {
+        el.getContext = () => ({
+          beginPath() {}, roundRect() {}, rect() {}, fill() {}, stroke() {}, fillRect() {}, fillText() {},
+          measureText: text => ({ width: String(text).length * 10 })
+        });
+        el.toBlob = callback => callback({ type: "image/png", size: 1 });
+      }
+      return el;
+    },
+    createTextNode: (t) => new TextNode(t), body: new El("body")
+  },
   window: { scrollY: 0, scrollTo(_x, y) { this.scrollY = y; } }, navigator: { clipboard: { writeText: async (value) => { sandbox.copiedText = value; } } }, confirm: () => true,
   copiedText: "",
   fetch: async (path, init = {}) => {
@@ -119,6 +134,17 @@ await tick();
 ok(text().includes("Jouw wielerdoel") && text().includes("Maak mijn schema") && text().includes("jeugdrenners van 12 tot 18 jaar") &&
   text().includes("hartslag- en/of vermogenszones") && !text().includes("RPE"),
   "startpagina beschrijft zone-intensiteit zonder RPE- of waarschuwingsblokken");
+const landingHtml = fs.readFileSync("public/index.html", "utf8");
+const structuredData = landingHtml.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
+ok(landingHtml.includes('name="description"') && landingHtml.includes('name="robots" content="index, follow') &&
+  landingHtml.includes('property="og:title"') && landingHtml.includes('name="twitter:card"') &&
+  structuredData && JSON.parse(structuredData[1]).name === "WielerSchema" &&
+  landingHtml.includes("jeugdrenners en volwassenen") && landingHtml.includes("trainingsschema voor jeugd en volwassenen"),
+  "SEO- en deelpreviewmetadata beschrijven WielerSchema en de doelgroep");
+const styles = fs.readFileSync("public/style.css", "utf8");
+ok(styles.includes(".coach-launcher-button { position: fixed; right: 18px") &&
+  styles.includes("width: 44px; height: 44px"),
+  "coachknop staat rechts en is compacter gemaakt");
 const privacyHtml = fs.readFileSync("public/privacy.html", "utf8");
 ok(privacyHtml.includes("wielerschema@outlook.com") && privacyHtml.includes("geen medisch advies") &&
   privacyHtml.includes("ouder/verzorger") && !privacyHtml.includes("VUL_HIER_JE_CONTACTGEGEVENS_IN"),
@@ -205,6 +231,10 @@ ok(!text().includes("Jeugdrenner: train met begeleiding") && !text().includes("a
 ok(find(root.app, e => e.className.includes("day")).length >= 7, "zeven dagkaarten");
 ok(!find(root.app, e => e.className.includes("week-visual-day")).length &&
   !text().includes("Hoeveel uur per dag"), "oude weekbalkjes en uren-per-daggrafiek zijn verwijderd");
+const shareButton = find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Deel schema als afbeelding")[0];
+await shareButton.listeners.click[0]({ preventDefault() {} });
+ok(downloads.includes("wielerschema-week-1.png") && text().includes("Afbeelding gedownload."),
+  "de huidige schemaweek kan als PNG-afbeelding worden gedeeld of gedownload");
 ok(!text().includes("Hoeveel van het schema heb je gedaan?"), "oude weekcheck-in met formulier is verwijderd");
 ok(!text().includes("Dagmetingen") && !text().includes("Kopieer trainingsprompt"), "dagmetingen en TrainingPeaks-prompt staan niet prominent in het weekschema");
 const planData = await (await sandbox.fetch("/api/plan")).json();
@@ -214,9 +244,10 @@ dayButton.click();
 ok(find(root.app, e => e.attrs.role === "dialog").length === 1 && text().includes("Training aanpassen"),
   "op een dag klikken opent een detailvenster");
 ok(find(root.app, e => e.className === "workout-profile-chart").length === 1 &&
-  find(root.app, e => e.className.includes("profile-segment")).length === 3 &&
-  text().includes("De blokken volgen de trainingsopbouw uit het schema."),
-  "duurtraining toont de drie werkelijke trainingsblokken in de detailpopup");
+  find(root.app, e => e.className.includes("profile-segment")).length === 1 &&
+  find(root.app, e => e.className.includes("profile-segment"))[0].className.includes("profile-z2") &&
+  text().includes("Gelijkmatige training in Z2."),
+  "gelijkmatige duurtraining toont één doorlopende balk in de ingestelde zone");
 ok(text().includes("Optioneel: gebruiken in TrainingPeaks AI"), "TrainingPeaks-prompt zit achter een optionele uitklapper");
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer prompt voor TrainingPeaks AI")[0].click();
 await tick();
@@ -253,7 +284,10 @@ blockRows.forEach((row, index) => {
 await submit(editForm);
 ok(text().includes("Handmatige duurrit") && text().includes("1 u 10 min"), "training handmatig aanpassen slaat wijzigingen in het schema op");
 find(root.app, e => e.className.includes("day-details-button"))[dayToEdit].click();
-ok(find(root.app, e => e.className.includes("profile-segment")).length === 5 &&
+const intervalSegments = find(root.app, e => e.className.includes("profile-segment"));
+const zoneHeights = intervalSegments.map(segment => Number(segment.attrs.style.match(/height:(\d+)%/)[1]));
+ok(intervalSegments.length === 5 &&
+  zoneHeights[1] > zoneHeights[2] && zoneHeights[2] > zoneHeights[0] &&
   text().includes("De blokken volgen de trainingsopbouw uit het schema."),
   "handmatig ingestelde warming-up, intervallen en herstel zijn zichtbaar in het zoneprofiel");
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer prompt voor TrainingPeaks AI")[0].click();

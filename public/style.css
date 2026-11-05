@@ -315,18 +315,20 @@ input[type=text], input[type=password], input[type=number], input[type=date], se
 .chat-send:disabled { opacity: .6; cursor: wait; }
 .week-checkin-prompt { border-left: 4px solid #7d9c62; }
 .week-checkin-prompt .eyebrow { margin-bottom: -8px; }
-.coach-launcher-button { position: fixed; left: 264px; bottom: 18px; z-index: 8; display: flex; align-items: center; gap: 11px; min-width: 220px; padding: 10px 14px 10px 10px; border: 1px solid #426638; border-radius: 18px; background: #426638; color: #fff; box-shadow: 0 8px 26px rgb(25 49 29 / 25%); text-align: left; cursor: pointer; }
+.coach-launcher-button { position: fixed; right: 18px; bottom: 18px; z-index: 8; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 7px 10px 7px 7px; border: 1px solid #426638; border-radius: 15px; background: #426638; color: #fff; box-shadow: 0 6px 20px rgb(25 49 29 / 22%); text-align: left; cursor: pointer; }
 .coach-launcher-button:hover { background: #35572e; transform: translateY(-2px); }
-.launcher-avatar { display: grid; flex: 0 0 40px; width: 40px; height: 40px; place-items: center; border: 2px solid rgb(255 255 255 / 65%); border-radius: 50%; background: #edf4e7; color: #426638; font-weight: 850; }
+.launcher-avatar { display: grid; flex: 0 0 30px; width: 30px; height: 30px; place-items: center; border: 2px solid rgb(255 255 255 / 65%); border-radius: 50%; background: #edf4e7; color: #426638; font-weight: 850; }
 .launcher-copy { display: flex; flex-direction: column; line-height: 1.3; }
-.launcher-copy strong { font-size: .9rem; }
-.launcher-copy > span { color: #e0eadb; font-size: .76rem; }
-.launcher-arrow { margin-left: auto; font-size: 1.15rem; }
+.launcher-copy strong { font-size: .78rem; }
+.launcher-copy > span { color: #e0eadb; font-size: .68rem; }
+.launcher-arrow { margin-left: auto; font-size: .95rem; }
 .t-mtb { border-top-color: #6d7840; }
 @media (max-width: 760px) {
-  .coach-launcher-button { left: 14px; bottom: 14px; min-width: 0; padding: 8px; }
+  .coach-launcher-button { right: 14px; bottom: 14px; width: 44px; height: 44px; justify-content: center; padding: 6px; border-radius: 50%; }
   .launcher-copy, .launcher-arrow { display: none; }
 }
+.week-actions { justify-content: flex-end; }
+@media (max-width: 650px) { .week-actions { width: 100%; } .week-actions .btn { flex: 1 1 auto; } }
 @media (max-width: 560px) {
   .chat { max-height: 55vh; padding: 12px; }
   .chat-message { max-width: 94%; }

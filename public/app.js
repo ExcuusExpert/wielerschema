@@ -724,6 +724,142 @@ function downloadIcs(plan, week) {
   a.remove();
 }
 
+function drawWrappedText(context, text, x, y, maxWidth, lineHeight, maxLines = 2) {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  let line = "";
+  let lines = 0;
+  for (const word of words) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (line && context.measureText(candidate).width > maxWidth) {
+      context.fillText(line, x, y);
+      y += lineHeight;
+      lines++;
+      if (lines >= maxLines) return;
+      line = word;
+    } else {
+      line = candidate;
+    }
+  }
+  if (line && lines < maxLines) context.fillText(line, x, y);
+}
+
+function workoutZoneBlocks(workout, intake) {
+  const zone = Number((workout.zone || "").slice(1));
+  const hasIntervalStructure = ["drempel", "vo2max", "sprint"].includes(workout.type) ||
+    /interval|\b\d+\s*[x×]\s*\d+/i.test(`${workout.titel || ""} ${workout.beschrijving || ""}`);
+  const supplied = workout.blokken;
+  if (hasIntervalStructure && Array.isArray(supplied) && supplied.length &&
+      supplied.reduce((total, block) => total + block.minuten, 0) === workout.minuten) return supplied;
+  if (!zone) return [{ minuten: workout.minuten, zone: "", label: "Zone niet opgegeven" }];
+  return [{ minuten: workout.minuten, zone: workout.zone, label: "Gelijkmatig" }];
+}
+
+function maxVisibleZone(intake, blocks) {
+  const highestZone = Math.max(0, ...blocks.map(block => Number((block.zone || "").slice(1))));
+  return ["power", "both"].includes(intake.meter) &&
+    (intake.meter === "power" || highestZone > 5)
+    ? (intake.power_zone_count === 5 ? 5 : 7) : 5;
+}
+
+function drawWeekImage(plan, week) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1080;
+  canvas.height = 1240;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Je browser kan de afbeelding niet maken.");
+
+  const margin = 52;
+  const gap = 18;
+  const cardWidth = (canvas.width - margin * 2 - gap) / 2;
+  const cardHeight = 218;
+  const headerBottom = 220;
+  const colors = { ink: "#202b25", muted: "#65736a", line: "#e2e8e2", green: "#587d3e", pale: "#f5f7f5", white: "#ffffff" };
+  context.fillStyle = colors.pale;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = colors.green;
+  context.font = "700 24px system-ui, sans-serif";
+  context.fillText("WIELERSCHEMA", margin, 56);
+  context.fillStyle = colors.ink;
+  context.font = "700 42px system-ui, sans-serif";
+  context.fillText(`Trainingsschema · week ${week.week_no}`, margin, 112);
+  context.fillStyle = colors.muted;
+  context.font = "20px system-ui, sans-serif";
+  drawWrappedText(context, plan.intake.doel || "Jouw trainingsweek", margin, 151, canvas.width - margin * 2, 23, 2);
+  context.fillText(`Totaal ${minutesText(week.totaal_minuten)}`, margin, 203);
+
+  week.dagen.forEach((day, index) => {
+    const col = index % 2;
+    const row = Math.floor(index / 2);
+    const x = margin + col * (cardWidth + gap);
+    const y = headerBottom + row * (cardHeight + gap);
+    const date = addDays(plan.start_date, (week.week_no - 1) * 7 + day.dag);
+    context.fillStyle = colors.white;
+    context.strokeStyle = colors.line;
+    context.lineWidth = 2;
+    context.beginPath();
+    if (context.roundRect) context.roundRect(x, y, cardWidth, cardHeight, 18);
+    else context.rect(x, y, cardWidth, cardHeight);
+    context.fill();
+    context.stroke();
+    context.fillStyle = colors.green;
+    context.font = "700 20px system-ui, sans-serif";
+    context.fillText(`${DAGEN_KORT[day.dag]} · ${dateLabel(date)}`, x + 20, y + 34);
+    context.fillStyle = colors.ink;
+    context.font = "700 26px system-ui, sans-serif";
+    drawWrappedText(context, day.type === "rust" ? "Rustdag" : day.titel || TYPE_LABEL[day.type] || day.type,
+      x + 20, y + 72, cardWidth - 40, 31, 2);
+    context.fillStyle = colors.muted;
+    context.font = "20px system-ui, sans-serif";
+    const descriptionY = y + 126;
+    context.fillText(day.type === "rust" ? "Rust" :
+      `${TYPE_LABEL[day.type] || day.type} · ${minutesText(day.minuten)}${day.zone ? ` · ${day.zone}` : ""}`,
+      x + 20, descriptionY);
+    drawWrappedText(context, day.beschrijving, x + 20, descriptionY + 30, cardWidth - 40, 23, 2);
+
+    if (day.type !== "rust") {
+      const blocks = workoutZoneBlocks(day, plan.intake);
+      const barX = x + 20;
+      const barY = y + cardHeight - 24;
+      const barWidth = cardWidth - 40;
+      let offset = 0;
+      for (const block of blocks) {
+        const width = barWidth * block.minuten / day.minuten;
+        const level = Number((block.zone || "").slice(1));
+        context.fillStyle = level ? ["#8da981", "#587d3e", "#315f35", "#224c2b", "#173b22", "#102e1a", "#0a2413"][level - 1] : "#87949a";
+        context.fillRect(barX + offset, barY, width, 10);
+        offset += width;
+      }
+    }
+  });
+  context.fillStyle = colors.muted;
+  context.font = "16px system-ui, sans-serif";
+  context.fillText("Gemaakt met WielerSchema", margin, canvas.height - 18);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("De schema-afbeelding kon niet worden gemaakt.")), "image/png");
+  });
+}
+
+async function shareWeekAsImage(plan, week, status) {
+  status.textContent = "Schema-afbeelding maken…";
+  const blob = await drawWeekImage(plan, week);
+  const filename = `wielerschema-week-${week.week_no}.png`;
+  if (navigator.share && typeof File === "function") {
+    const file = new File([blob], filename, { type: "image/png" });
+    if (navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file], title: `WielerSchema · week ${week.week_no}` });
+      status.textContent = "Schema gedeeld.";
+      return;
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  const link = h("a", { href: url, download: filename });
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL?.(url), 1000);
+  status.textContent = "Afbeelding gedownload.";
+}
+
 function trainingPeaksPrompt(plan, dag) {
   const meter = plan.intake.meter;
   const intensity = meter === "heart_rate" ? "Heart Rate (gebruik mijn ingestelde hartslagzones)"
@@ -769,18 +905,15 @@ function dayCard(plan, week, dag) {
 }
 
 function workoutProfileBlocks(workout, intake) {
-  const maxZone = ["power", "both"].includes(intake.meter)
-    ? (intake.power_zone_count === 5 ? 5 : 7) : 5;
-  const supplied = workout.blokken;
-  if (Array.isArray(supplied) && supplied.length &&
-      supplied.reduce((total, block) => total + block.minuten, 0) === workout.minuten) return supplied;
+  const suppliedBlocks = workoutZoneBlocks(workout, intake);
+  const maxZone = maxVisibleZone(intake, suppliedBlocks);
+  if (suppliedBlocks.length !== 1 || suppliedBlocks[0].label !== "Gelijkmatig") return suppliedBlocks;
 
   const zone = Number((workout.zone || "").slice(1));
-  if (!zone) return [{ minuten: workout.minuten, zone: "", label: "Zone niet opgegeven" }];
+  if (!zone) return suppliedBlocks;
   const interval = ["drempel", "vo2max", "sprint"].includes(workout.type) ||
-    /interval|\b\d+\s*[x×]\s*\d+/i.test(workout.beschrijving || "");
-  if (!interval) return [{ minuten: workout.minuten, zone: workout.zone, label: "Gelijkmatig" }];
-
+    /interval|\b\d+\s*[x×]\s*\d+/i.test(`${workout.titel || ""} ${workout.beschrijving || ""}`);
+  if (!interval) return suppliedBlocks;
   const target = Math.min(zone, maxZone);
   const recovery = Math.max(1, target - 1);
   const warmup = Math.max(2, Math.round(workout.minuten * 0.15));
@@ -806,8 +939,7 @@ function workoutProfileBlocks(workout, intake) {
 
 function workoutProfile(workout, intake) {
   const blocks = workoutProfileBlocks(workout, intake);
-  const maxZone = ["power", "both"].includes(intake.meter)
-    ? (intake.power_zone_count === 5 ? 5 : 7) : 5;
+  const maxZone = maxVisibleZone(intake, blocks);
   const chart = h("div", {
     class: "workout-profile-chart",
     role: "img",
@@ -822,8 +954,9 @@ function workoutProfile(workout, intake) {
     }, h("span", { class: "profile-zone-label", text: block.zone || "—" }));
   }));
   const description = workout.blokken?.length
+    && blocks.length > 1
     ? "De blokken volgen de trainingsopbouw uit het schema."
-    : "Schematische opbouw op basis van trainingstype en zone.";
+    : workout.zone ? `Gelijkmatige training in ${workout.zone}.` : "Trainingszone niet opgegeven.";
   return h("figure", { class: "workout-profile" },
     h("figcaption", {},
       h("strong", { text: "Trainingsverloop" }),
@@ -1211,6 +1344,20 @@ function viewPlan() {
   const outlineItem = plan.outline.find(o => o.week === week.week_no);
   const isLast = week.week_no === last.week_no;
   const finished = isLast && week.week_no >= plan.total_weeks;
+  const shareStatus = h("p", { class: "muted", role: "status", "aria-live": "polite" });
+  const shareButton = h("button", {
+    class: "btn ghost small", type: "button", text: "Deel schema als afbeelding",
+    onclick: async () => {
+      shareButton.disabled = true;
+      try {
+        await shareWeekAsImage(plan, week, shareStatus);
+      } catch (error) {
+        if (error.name !== "AbortError") shareStatus.textContent = error.message || "De schema-afbeelding kon niet worden gemaakt.";
+      } finally {
+        shareButton.disabled = false;
+      }
+    }
+  });
 
   show(
     h("div", { class: "dashboard-heading" },
@@ -1231,7 +1378,10 @@ function viewPlan() {
     h("section", { class: "stack" },
       h("div", { class: "row between" },
         h("h2", { text: `Week ${week.week_no}${outlineItem && outlineItem.focus ? ": " + outlineItem.focus : ""}` }),
-        h("button", { class: "btn ghost small", type: "button", text: "Download agenda (.ics)", onclick: () => downloadIcs(plan, week) })),
+        h("div", { class: "row week-actions" },
+          h("button", { class: "btn ghost small", type: "button", text: "Download agenda (.ics)", onclick: () => downloadIcs(plan, week) }),
+          shareButton)),
+      shareStatus,
       week.uitleg ? h("p", { class: "muted", text: week.uitleg }) : null,
       h("p", { class: "muted", text: `Totaal ${minutesText(week.totaal_minuten)}` }),
       h("div", { class: "days-grid" }, ...week.dagen.map(d => dayCard(plan, week, d))),

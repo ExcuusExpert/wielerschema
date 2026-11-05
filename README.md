@@ -18,6 +18,7 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 - Eén doorlopende, WhatsApp-achtige chat met de coach; de coach krijgt de datum en de training van vandaag uit je actuele schema mee, zonder dat je week of dag hoeft te kiezen.
 - Pas trainingsdagen ook zelf aan: trainingstype, duur, zone, titel, beschrijving en optionele intervalblokken. Handmatige wijzigingen worden direct opgeslagen; de beschikbare zones, weeklimiet en gezondheidswaarschuwingen blijven gelden.
 - Open een trainingsdag voor details en handmatig aanpassen. Het detailvenster toont een zoneprofiel met warming-up, intervallen en herstel waar die blokken beschikbaar zijn; anders is de opbouw nadrukkelijk als schematisch gemarkeerd.
+- Een gelijkmatige training wordt als één zone getoond; intervalblokken houden hun eigen zonehoogte. Deel of download een volledige trainingsweek als PNG-afbeelding.
 - De TrainingPeaks-import is verwijderd. Een optionele prompt om een training in TrainingPeaks AI te laten opbouwen is nog beschikbaar vanuit de trainingsdetails en neemt de actuele duur, zones en intervalblokken mee.
 - Na afloop vraagt de coach in de chat hoe je week ging; op basis van je antwoord maakt die de volgende week.
 - Activiteiten en automatische trainings- of herstelmetrics zijn nog niet beschikbaar zolang de externe koppelingen niet actief zijn.
