@@ -76,6 +76,22 @@ globalThis.fetch = async (url, init) => {
         ]
       }
     });
+    else if (coachMode === "event-plan") {
+      const outline = JSON.parse(prompt.match(/<schema-overzicht>(.*?)<\/schema-overzicht>/)[1]);
+      const eventWeek = Number(prompt.match(/week (\d+), dag/)[1]);
+      outline[eventWeek - 1] = {
+        ...outline[eventWeek - 1],
+        fase: "piek",
+        focus: "Wedstrijd Appelscha"
+      };
+      content = JSON.stringify({
+        antwoord: "Ik heb een voorstel gemaakt voor de wedstrijd en de aangepaste opbouw.",
+        voorstel: null,
+        week_feedback: null,
+        evenement: { titel: "Wedstrijd Appelscha", type: "wedstrijd", beschrijving: "Wielerwedstrijd in Appelscha." },
+        schema_aanpassing: { samenvatting: "Rustige opbouw naar de wedstrijd met herstel erna.", weken: outline }
+      });
+    }
     else if (coachMode === "today") content = JSON.stringify({
       antwoord: "Vandaag staat je rustige duurtraining van 45 minuten in Z2 gepland.",
       voorstel: null,
@@ -323,7 +339,7 @@ test("training handmatig aanpassen slaat alleen een geldige wijziging op", async
     week_no: 1, day_no: 3, workout: { type: "tempo", minuten: 55, zone: "Z2", titel: "Tempo", beschrijving: "Stevig tempo." }
   })).status, 401);
   assert.equal((await edit({ type: "tempo", minuten: 55, zone: "Z9", titel: "Tempo", beschrijving: "Stevig tempo." })).status, 400);
-  assert.equal((await edit({ type: "tempo", minuten: 360, zone: "Z2", titel: "Tempo", beschrijving: "Stevig tempo." })).status, 400);
+  assert.equal((await edit({ type: "tempo", minuten: 361, zone: "Z2", titel: "Tempo", beschrijving: "Stevig tempo." })).status, 400);
   assert.equal((await api(env, "POST", "/api/plan/workout", {
     week_no: 1, day_no: 2, workout: { type: "tempo", minuten: 55, zone: "Z2", titel: "Tempo", beschrijving: "Stevig tempo." }
   }, { cookie })).status, 400);
@@ -354,9 +370,9 @@ test("training handmatig aanpassen slaat alleen een geldige wijziging op", async
   });
   assert.equal(invalidBlocks.status, 200);
   assert.equal(invalidBlocks.data.week.dagen.find(day => day.dag === 3).blokken, undefined);
-  assert.deepEqual(updated.data.week.dagen.find(day => day.dag === 1), unchanged);
-  assert.equal(updated.data.week.totaal_minuten,
-    updated.data.week.dagen.filter(day => day.type !== "rust").reduce((sum, day) => sum + day.minuten, 0));
+  assert.deepEqual(invalidBlocks.data.week.dagen.find(day => day.dag === 1), unchanged);
+  assert.equal(invalidBlocks.data.week.totaal_minuten,
+    invalidBlocks.data.week.dagen.filter(day => day.type !== "rust").reduce((sum, day) => sum + day.minuten, 0));
   const saved = await api(env, "GET", "/api/plan", undefined, { cookie });
   assert.equal(saved.data.weeks[0].dagen.find(day => day.dag === 3).titel, "Zonder geldig profiel");
 
@@ -373,6 +389,22 @@ test("training handmatig aanpassen slaat alleen een geldige wijziging op", async
     workout: { type: "duurrit", minuten: 30, zone: "Z2", titel: "Rustige duur", beschrijving: "Rustig en beheerst." }
   }, { cookie });
   assert.equal(safe.status, 200, JSON.stringify(safe.data));
+});
+
+test("een week boven de richtlijn kan worden opgeslagen met een duidelijke waarschuwing", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env, "weekwaarschuwing");
+  const intake = { ...INTAKE, geboortedatum: "2010-06-15" };
+  const created = await api(env, "POST", "/api/plan/create", { intake }, { cookie });
+  const updated = await api(env, "POST", "/api/plan/workout", {
+    week_no: 1, day_no: 3,
+    workout: { type: "duurrit", minuten: 240, zone: "Z2", titel: "Lange rit", beschrijving: "Rustige duurtraining." }
+  }, { cookie });
+  assert.equal(updated.status, 200, JSON.stringify(updated.data));
+  assert.ok(updated.data.week.totaal_minuten > intake.uren_per_week * 63);
+  assert.match(updated.data.week.weekbelasting_waarschuwing, /boven je richtlijn/);
+  assert.match(updated.data.week.weekbelasting_waarschuwing, /ouder\/verzorger en jeugdtrainer/);
+  assert.ok(created.data.weeks[0].dagen.find(day => day.dag === 3));
 });
 
 test("handmatige trainingszones volgen het gekozen zoneprofiel", async () => {
@@ -613,7 +645,7 @@ test("coach houdt een expliciete MTB-duur van twee uur aan en voorstel kan worde
   ]);
 });
 
-test("coach verkort een expliciete rit niet als die de weeklimiet overschrijdt", async () => {
+test("coach houdt een expliciete rit aan boven de weekrichtlijn en waarschuwt", async () => {
   const env = makeEnv();
   const cookie = await signup(env, "mtb-limiet");
   await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
@@ -634,9 +666,73 @@ test("coach verkort een expliciete rit niet als die de weeklimiet overschrijdt",
   }, { cookie });
   coachMode = "proposal";
   assert.equal(reply.status, 200, JSON.stringify(reply.data));
-  assert.equal(reply.data.voorstel, null);
-  assert.match(reply.data.antwoord, /gevraagde rit van 120 minuten/);
-  assert.match(reply.data.antwoord, /minstens 42 minuten vrij/);
+  assert.equal(reply.data.voorstel.workout.minuten, 120);
+  assert.match(reply.data.voorstel.workout.weekbelasting_waarschuwing, /boven je richtlijn/);
+  const applied = await api(env, "POST", "/api/coach/suggestions", {
+    id: reply.data.voorstel.id, action: "apply"
+  }, { cookie });
+  assert.equal(applied.status, 200, JSON.stringify(applied.data));
+  assert.match(applied.data.week.weekbelasting_waarschuwing, /boven je richtlijn/);
+});
+
+test("coach maakt een voorstel voor een wedstrijd en aangepaste schema-opbouw", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env, "wedstrijdplan");
+  const created = await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  coachMode = "event-plan";
+  const reply = await api(env, "POST", "/api/coach/chat", {
+    week_no: 1, day_no: 0,
+    bericht: "Ik heb over drie weken een wedstrijd in Appelscha. Zet die in mijn schema.",
+    global: true
+  }, { cookie });
+  coachMode = "proposal";
+  assert.equal(reply.status, 200, JSON.stringify(reply.data));
+  assert.equal(reply.data.aangepast, false);
+  assert.equal(reply.data.voorstel.status, "pending");
+  const event = reply.data.voorstel.workout;
+  assert.equal(event.kind, "event");
+  assert.equal(event.title, "Wedstrijd Appelscha");
+  assert.ok(event.week_no >= 3 && event.week_no <= 4);
+  assert.ok(lastGroqPrompt.includes("schema_aanpassing"));
+  const unchanged = await api(env, "GET", "/api/plan", undefined, { cookie });
+  assert.equal(unchanged.data.plan.events.length, 0);
+  assert.deepEqual(unchanged.data.plan.outline, created.data.plan.outline);
+
+  const applied = await api(env, "POST", "/api/coach/suggestions", {
+    id: reply.data.voorstel.id, action: "apply"
+  }, { cookie });
+  assert.equal(applied.status, 200, JSON.stringify(applied.data));
+  const plan = await api(env, "GET", "/api/plan", undefined, { cookie });
+  assert.equal(plan.data.plan.events.length, 1);
+  assert.equal(plan.data.plan.events[0].title, "Wedstrijd Appelscha");
+  assert.equal(plan.data.plan.events[0].event_date, event.event_date);
+  assert.match(plan.data.plan.summary, /wedstrijd/);
+  assert.equal(plan.data.plan.outline[event.week_no - 1].focus, "Wedstrijd Appelscha");
+});
+
+test("een goedgekeurd evenement wordt in de gegenereerde trainingsweek opgenomen", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env, "wedstrijdweek");
+  const created = await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  const userId = env.DB.db.prepare("SELECT id FROM users WHERE username = ?").get("wedstrijdweek").id;
+  const eventDate = new Date(`${created.data.plan.start_date}T00:00:00Z`);
+  eventDate.setUTCDate(eventDate.getUTCDate() + 11);
+  const eventIso = eventDate.toISOString().slice(0, 10);
+  env.DB.db.prepare(
+    "INSERT INTO plan_events (id, user_id, title, event_type, event_date, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).run("event-in-week-two", userId, "Jeugdwedstrijd", "wedstrijd", eventIso, "Wedstrijd van 2 uur.", Date.now());
+
+  const next = await api(env, "POST", "/api/plan/checkin", {
+    week_no: 1, gedaan_pct: 75, uren_gedaan: 5, gevoel: 4, klachten: false
+  }, { cookie });
+  assert.equal(next.status, 200, JSON.stringify(next.data));
+  const raceDay = (eventDate.getUTCDay() + 6) % 7;
+  const race = next.data.weeks.find(week => week.week_no === 2).dagen.find(day => day.dag === raceDay);
+  assert.equal(race.type, "race");
+  assert.equal(race.titel, "Jeugdwedstrijd");
+  assert.equal(race.minuten, 200);
+  assert.ok(lastGroqPrompt.includes("<evenementen>"));
+  assert.ok(lastGroqPrompt.includes("herstel"));
 });
 
 test("coach haalt de weekterugblik op in chat en maakt daarna de volgende week", async () => {

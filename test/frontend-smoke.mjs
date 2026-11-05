@@ -117,9 +117,11 @@ youthBirthDate.setUTCFullYear(youthBirthDate.getUTCFullYear() - 17);
 vm.runInContext(fs.readFileSync("public/app.js", "utf8"), sandbox, { filename: "app.js" });
 await tick();
 ok(text().includes("Jouw wielerdoel") && text().includes("Maak mijn schema") && text().includes("Jeugdrenner?"), "publieke startpagina zichtbaar voor een bezoeker");
-ok((fs.readFileSync("public/index.html", "utf8").match(/brand-mark">WS/g) || []).length === 2 &&
-  fs.readFileSync("public/favicon.svg", "utf8").includes(">WS</text>"),
-  "logo en favicon tonen alleen WS");
+ok((fs.readFileSync("public/index.html", "utf8").match(/class="brand-logo" src="logo\.png"/g) || []).length === 2 &&
+  fs.readFileSync("public/privacy.html", "utf8").includes('class="brand-logo" src="logo.png"') &&
+  fs.readFileSync("public/index.html", "utf8").includes('<link rel="icon" href="logo.png" type="image/png">') &&
+  fs.readFileSync("public/privacy.html", "utf8").includes('<link rel="icon" href="logo.png" type="image/png">'),
+  "logo en favicon gebruiken het aangeleverde beeldmerk");
 
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Maak mijn schema")[0].click();
 ok(text().includes("Account maken") && text().includes("Terug naar startpagina"), "registreerscherm is bereikbaar vanaf de startpagina");

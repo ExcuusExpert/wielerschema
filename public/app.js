@@ -1037,25 +1037,47 @@ function coachChat(plan, currentWeek) {
         h("span", { class: "chat-label", text: item.role === "assistant" ? "WielerSchema-coach" : "Jij" }),
         h("p", { class: "chat-bubble", text: item.content }),
         item.updated ? h("span", { class: "hint", text: "Training bijgewerkt" }) : null,
-        item.suggestion ? h("section", { class: "suggestion-card" },
-          h("strong", { text: `Voorstel voor ${DAGEN_KORT[item.suggestion.workout.dag] || "training"}` }),
-          item.suggestion.workout.huidige ? h("div", { class: "suggestion-comparison" },
-            h("p", { class: "hint", text: "Huidige training" }),
-            h("p", { text: `${TYPE_LABEL[item.suggestion.workout.huidige.type] || "Training"}${item.suggestion.workout.huidige.type === "rust" ? "" : ` · ${minutesText(item.suggestion.workout.huidige.minuten)}`}` }),
-            h("p", { text: item.suggestion.workout.huidige.titel }),
-            item.suggestion.workout.huidige.zone ? h("p", { class: "muted", text: item.suggestion.workout.huidige.zone }) : null,
-            item.suggestion.workout.huidige.beschrijving ? h("p", { class: "muted", text: item.suggestion.workout.huidige.beschrijving }) : null,
-            h("p", { class: "suggestion-arrow", "aria-hidden": "true", text: "↓" })) : null,
-          h("p", { class: "hint", text: "Voorgestelde training" }),
-          h("strong", { text: `${TYPE_LABEL[item.suggestion.workout.type] || "Training"}${item.suggestion.workout.type === "rust" ? "" : ` · ${minutesText(item.suggestion.workout.minuten)}`}` }),
-          h("p", { text: item.suggestion.workout.titel }),
-          item.suggestion.workout.zone ? h("p", { class: "muted", text: item.suggestion.workout.zone }) : null,
-          h("p", { class: "muted", text: item.suggestion.workout.beschrijving }),
-          item.suggestion.status === "pending"
-            ? h("div", { class: "row" },
-              h("button", { class: "btn small", type: "button", text: "Voorstel toepassen", onclick: () => resolveSuggestion(item.suggestion.id, "apply") }),
-              h("button", { class: "btn ghost small", type: "button", text: "Niet toepassen", onclick: () => resolveSuggestion(item.suggestion.id, "dismiss") }))
-            : h("p", { class: "hint", text: item.suggestion.status === "applied" ? "Training aangepast" : "Voorstel niet toegepast" })) : null));
+        item.suggestion ? item.suggestion.workout.kind === "event"
+          ? h("section", { class: "suggestion-card event-suggestion" },
+            h("strong", { text: "Evenement en schema-aanpassing" }),
+            h("h3", { text: item.suggestion.workout.title }),
+            h("p", { text: `${dateLabel(item.suggestion.workout.event_date)} · ${item.suggestion.workout.event_type}` }),
+            item.suggestion.workout.description ? h("p", { class: "muted", text: item.suggestion.workout.description }) : null,
+            h("p", { class: "hint", text: `Dit evenement komt in week ${item.suggestion.workout.week_no}. De coach past de opbouw en herstelweken in het schema hierop aan.` }),
+            h("p", { class: "muted", text: item.suggestion.workout.plan_summary }),
+            h("ul", { class: "event-outline-changes" },
+              ...item.suggestion.workout.plan_outline
+                .filter(row => {
+                  const current = state.data.plan.outline.find(old => old.week === row.week);
+                  return !current || current.focus !== row.focus || current.fase !== row.fase || current.uren !== row.uren;
+                })
+                .slice(0, 4)
+                .map(row => h("li", { text: `Week ${row.week}: ${FASE_LABEL[row.fase] || row.fase} · ${row.focus} · ${row.uren} u` }))),
+            item.suggestion.status === "pending"
+              ? h("div", { class: "row" },
+                h("button", { class: "btn small", type: "button", text: "Evenement en schema toepassen", onclick: () => resolveSuggestion(item.suggestion.id, "apply") }),
+                h("button", { class: "btn ghost small", type: "button", text: "Niet toepassen", onclick: () => resolveSuggestion(item.suggestion.id, "dismiss") }))
+              : h("p", { class: "hint", text: item.suggestion.status === "applied" ? "Evenement en schema bijgewerkt" : "Voorstel niet toegepast" }))
+          : h("section", { class: "suggestion-card" },
+            h("strong", { text: `Voorstel voor ${DAGEN_KORT[item.suggestion.workout.dag] || "training"}` }),
+            item.suggestion.workout.huidige ? h("div", { class: "suggestion-comparison" },
+              h("p", { class: "hint", text: "Huidige training" }),
+              h("p", { text: `${TYPE_LABEL[item.suggestion.workout.huidige.type] || "Training"}${item.suggestion.workout.huidige.type === "rust" ? "" : ` · ${minutesText(item.suggestion.workout.huidige.minuten)}`}` }),
+              h("p", { text: item.suggestion.workout.huidige.titel }),
+              item.suggestion.workout.huidige.zone ? h("p", { class: "muted", text: item.suggestion.workout.huidige.zone }) : null,
+              item.suggestion.workout.huidige.beschrijving ? h("p", { class: "muted", text: item.suggestion.workout.huidige.beschrijving }) : null,
+              h("p", { class: "suggestion-arrow", "aria-hidden": "true", text: "↓" })) : null,
+            h("p", { class: "hint", text: "Voorgestelde training" }),
+            h("strong", { text: `${TYPE_LABEL[item.suggestion.workout.type] || "Training"}${item.suggestion.workout.type === "rust" ? "" : ` · ${minutesText(item.suggestion.workout.minuten)}`}` }),
+            h("p", { text: item.suggestion.workout.titel }),
+            item.suggestion.workout.zone ? h("p", { class: "muted", text: item.suggestion.workout.zone }) : null,
+            h("p", { class: "muted", text: item.suggestion.workout.beschrijving }),
+            item.suggestion.workout.weekbelasting_waarschuwing ? h("p", { class: "load-warning", role: "status", text: item.suggestion.workout.weekbelasting_waarschuwing }) : null,
+            item.suggestion.status === "pending"
+              ? h("div", { class: "row" },
+                h("button", { class: "btn small", type: "button", text: "Voorstel toepassen", onclick: () => resolveSuggestion(item.suggestion.id, "apply") }),
+                h("button", { class: "btn ghost small", type: "button", text: "Niet toepassen", onclick: () => resolveSuggestion(item.suggestion.id, "dismiss") }))
+              : h("p", { class: "hint", text: item.suggestion.status === "applied" ? "Training aangepast" : "Voorstel niet toegepast" })) : null));
     }
     if (checkinDue && !thinking) messages.appendChild(h("div", { class: "chat-message coach" },
       h("span", { class: "chat-label", text: "WielerSchema-coach" }),
@@ -1208,7 +1230,14 @@ function viewPlan() {
       h("p", { text: plan.summary }),
       h("p", { class: "muted", text: `${plan.total_weeks} weken, start ${dateLabel(plan.start_date)}. Je ziet steeds één week in detail; de volgende week maakt de coach nadat je hebt teruggemeld hoe het ging.` }),
       outline),
+    plan.events?.length ? h("section", { class: "card stack plan-events" },
+      h("h2", { text: "Aankomende evenementen" }),
+      ...plan.events.map(event => h("div", { class: "plan-event" },
+        h("strong", { text: event.title }),
+        h("span", { class: "muted", text: `${dateLabel(event.event_date)} · ${event.event_type}` }),
+        event.description ? h("p", { class: "muted", text: event.description }) : null))) : null,
     week.waarschuwing ? h("p", { class: "warn", role: "alert", text: week.waarschuwing }) : null,
+    week.weekbelasting_waarschuwing ? h("p", { class: "load-warning", role: "status", text: week.weekbelasting_waarschuwing }) : null,
     h("section", { class: "stack" },
       h("div", { class: "row between" },
         h("h2", { text: `Week ${week.week_no}${outlineItem && outlineItem.focus ? ": " + outlineItem.focus : ""}` }),

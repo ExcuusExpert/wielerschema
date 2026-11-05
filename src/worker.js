@@ -34,6 +34,10 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS plans (
      user_id TEXT PRIMARY KEY, intake TEXT NOT NULL, answers TEXT NOT NULL, outline TEXT NOT NULL,
      summary TEXT NOT NULL, start_date TEXT NOT NULL, total_weeks INTEGER NOT NULL, created_at INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS plan_events (
+     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL, event_type TEXT NOT NULL,
+     event_date TEXT NOT NULL, description TEXT NOT NULL, created_at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS idx_plan_events_user_date ON plan_events(user_id, event_date)`,
   `CREATE TABLE IF NOT EXISTS weeks (
      user_id TEXT NOT NULL, week_no INTEGER NOT NULL, detail TEXT NOT NULL, checkin TEXT,
      created_at INTEGER NOT NULL, PRIMARY KEY (user_id, week_no))`,
@@ -53,7 +57,7 @@ const SYSTEM_COACH =
   "Je bent een ervaren, voorzichtige wielercoach die in het Nederlands trainingsschema's maakt voor recreatieve en ambitieuze wielrenners. Regels: " +
   "Een schema is geen medisch advies; bij pijn, blessures, ziekte of ongewone klachten adviseer je rust en een arts of fysiotherapeut. " +
   "Bouw rustig op: verhoog het weekvolume met hooguit ongeveer 10 procent per week en plan elke derde of vierde week een herstelweek. " +
-  "Hou je voor de gewone trainingsopbouw aan de beschikbare dagen en het maximale aantal uren per week. Een concrete, door de gebruiker genoemde clubrit of wedstrijd mag op de genoemde dag worden toegevoegd; houd wel de weeklimiet aan. " +
+  "Hou je voor de gewone trainingsopbouw aan de beschikbare dagen en het maximale aantal uren per week. Een concrete clubrit of wedstrijd mag worden toegevoegd; als de weekrichtlijn daardoor wordt overschreden, toon een korte waarschuwing maar blokkeer de gevraagde activiteit niet. " +
   "Als de sporter jonger dan 18 is: wees extra terughoudend en leeftijdsbewust, stel gezondheid, plezier, techniek en herstel voorop, voorkom druk om af te vallen of te presteren, verzin geen trainingsbelasting en adviseer het schema met ouder/verzorger en gekwalificeerde jeugdtrainer te bespreken. " +
   "Gebruik persoonlijke zones zoals in de gebruikersinvoer. Hartslag heeft vijf zones op basis van maximale hartslag (Z1 tot 60%, Z2 tot 70%, Z3 tot 80%, Z4 tot 90%, Z5 tot 100%). Vermogen heeft vijf of zeven FTP-zones; Z6 en Z7 zijn alleen vermogenszones. Noem geen RPE; beschrijf de intensiteit in gewone taal en gebruik alleen beschikbare zones. Verzin geen bpm, FTP of wattages. " +
   "Een concrete trainingswijziging pas je direct toe als de gebruiker duidelijk vraagt die in het schema te zetten; bij een vrijblijvende vraag blijft het een voorstel ter bevestiging. " +
@@ -129,6 +133,33 @@ function requestedDurationMinutes(text) {
 function requestedDayNo(text) {
   const match = String(text || "").toLowerCase().match(/\b(maandag|dinsdag|woensdag|donderdag|vrijdag|zaterdag|zondag)\b/);
   return match ? DAG_NAMEN.indexOf(match[1]) : null;
+}
+function requestedEventDate(text, todayDate) {
+  const value = String(text || "").toLowerCase();
+  const relative = value.match(/\b(?:over|in)\s+(een|1|twee|2|drie|3|vier|4|vijf|5|zes|6|zeven|7|acht|8|negen|9|tien|10)\s+weken?\b/);
+  if (relative) {
+    const number = { een: 1, twee: 2, drie: 3, vier: 4, vijf: 5, zes: 6, zeven: 7, acht: 8, negen: 9, tien: 10 };
+    const weeks = Number(relative[1]) || number[relative[1]];
+    return addDays(todayDate, weeks * 7);
+  }
+  const dutch = value.match(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})\b/);
+  const iso = value.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  const date = dutch
+    ? `${dutch[3]}-${dutch[2].padStart(2, "0")}-${dutch[1].padStart(2, "0")}`
+    : iso ? iso[0] : null;
+  if (!date) return null;
+  const parsed = parseDate(date);
+  return parsed && parsed.toISOString().slice(0, 10) === date ? date : null;
+}
+function weekLoadWarning(total, intake) {
+  const limit = intake.uren_per_week * 63;
+  if (total <= limit) return "";
+  const hours = (total / 60).toLocaleString("nl-NL", { maximumFractionDigits: 1 });
+  const limitHours = (intake.uren_per_week * 1.05).toLocaleString("nl-NL", { maximumFractionDigits: 1 });
+  const youth = intake.leeftijd < 18
+    ? " Bespreek de extra belasting met je ouder/verzorger en jeugdtrainer."
+    : " Bouw trainingsbelasting rustig op.";
+  return `Deze week staat ${hours} uur gepland, boven je richtlijn van ${limitHours} uur.${youth}`;
 }
 function cleanNum(v, min, max) {
   if (v === "" || v === null || v === undefined) return null;
@@ -370,7 +401,7 @@ function planWeeks(intake, start) {
 }
 
 // Maakt van het AI-antwoord een veilige, vaste week. Dit is de belangrijkste vangrail.
-function cleanWeek(raw, intake, capMinutes) {
+function cleanWeek(raw, intake, capMinutes, events = []) {
   const list = Array.isArray(raw?.dagen) ? raw.dagen : null;
   if (!list) throw new Error("geen dagen");
   const byDay = new Map();
@@ -379,20 +410,26 @@ function cleanWeek(raw, intake, capMinutes) {
     if (Number.isInteger(d) && d >= 0 && d <= 6 && !byDay.has(d)) byDay.set(d, item);
   }
   const dagen = [];
+  const eventByDay = new Map(events.map(event => [
+    (parseDate(event.event_date).getUTCDay() + 6) % 7,
+    event
+  ]));
   for (let d = 0; d <= 6; d++) {
     const item = byDay.get(d);
-    const type = item && TYPES.includes(item.type) ? item.type : "rust";
-    if (!item || type === "rust" || !intake.dagen.includes(d)) {
+    const event = eventByDay.get(d);
+    const type = event ? "race" : item && TYPES.includes(item.type) ? item.type : "rust";
+    if ((!item && !event) || (type === "rust" && !event) || (!intake.dagen.includes(d) && !event)) {
       dagen.push({ dag: d, type: "rust", minuten: 0, zone: "", titel: "Rustdag", beschrijving: "" });
       continue;
     }
-    const minuten = Math.min(360, Math.max(20, Math.round(Number(item.minuten) || 60)));
-    const blokken = cleanWorkoutBlocks(item.blokken, minuten, intake);
+    const minuten = Math.min(360, Math.max(20, Math.round(Number(item?.minuten) || 60)));
+    const blokken = event ? null : cleanWorkoutBlocks(item.blokken, minuten, intake);
     dagen.push({
       dag: d, type, minuten,
-      zone: validWorkoutZone(item.zone, intake) ? item.zone : "",
-      titel: cleanText(item.titel, 80) || type,
-      beschrijving: cleanWorkoutText(item.beschrijving, 500),
+      zone: event ? "" : validWorkoutZone(item.zone, intake) ? item.zone : "",
+      titel: event ? cleanText(event.title, 80) : cleanText(item.titel, 80) || type,
+      beschrijving: event ? cleanWorkoutText(event.description, 500) || "Evenement gepland; pas de duur aan als je de verwachte duur weet."
+        : cleanWorkoutText(item.beschrijving, 500),
       ...(blokken ? { blokken } : {})
     });
   }
@@ -400,14 +437,22 @@ function cleanWeek(raw, intake, capMinutes) {
   if (!workouts.length) throw new Error("geen trainingen");
   let total = workouts.reduce((s, d) => s + d.minuten, 0);
   if (total > capMinutes) {
-    const factor = capMinutes / total;
-    for (const d of workouts) {
+    const eventWorkouts = workouts.filter(day => eventByDay.has(day.dag));
+    const regularWorkouts = workouts.filter(day => !eventByDay.has(day.dag));
+    const eventMinutes = eventWorkouts.reduce((sum, day) => sum + day.minuten, 0);
+    const regularTotal = regularWorkouts.reduce((sum, day) => sum + day.minuten, 0);
+    const budget = Math.max(0, capMinutes - eventMinutes);
+    const factor = regularTotal ? Math.min(1, budget / regularTotal) : 0;
+    for (const d of regularWorkouts) {
       d.minuten = Math.max(20, Math.round((d.minuten * factor) / 5) * 5);
       if (d.blokken?.reduce((sum, block) => sum + block.minuten, 0) !== d.minuten) delete d.blokken;
     }
     total = workouts.reduce((s, d) => s + d.minuten, 0);
   }
-  return { dagen, tips: cleanText(raw.tips, 400), totaal_minuten: total };
+  return {
+    dagen, tips: cleanText(raw.tips, 400), totaal_minuten: total,
+    weekbelasting_waarschuwing: weekLoadWarning(total, intake) || undefined
+  };
 }
 
 function cleanOutline(raw, weeks, intake) {
@@ -544,6 +589,7 @@ async function handleApi(request, env, url) {
   if (path === "/api/plan" && method === "GET") return getPlan(env, user);
   if (path === "/api/plan" && method === "DELETE") {
     await env.DB.batch([
+      env.DB.prepare("DELETE FROM plan_events WHERE user_id = ?").bind(user.id),
       env.DB.prepare("DELETE FROM weeks WHERE user_id = ?").bind(user.id),
       env.DB.prepare("DELETE FROM plans WHERE user_id = ?").bind(user.id),
       env.DB.prepare("DELETE FROM coach_suggestions WHERE user_id = ?").bind(user.id),
@@ -609,10 +655,13 @@ async function loadPlan(env, userId) {
   const plan = await env.DB.prepare("SELECT * FROM plans WHERE user_id = ?").bind(userId).first();
   if (!plan) return null;
   const rows = (await env.DB.prepare("SELECT week_no, detail, checkin FROM weeks WHERE user_id = ? ORDER BY week_no").bind(userId).all()).results || [];
+  const events = (await env.DB.prepare(
+    "SELECT id, title, event_type, event_date, description FROM plan_events WHERE user_id = ? ORDER BY event_date"
+  ).bind(userId).all()).results || [];
   return {
     plan: {
       intake: normalizeStoredIntake(JSON.parse(plan.intake)), outline: JSON.parse(plan.outline), summary: plan.summary,
-      start_date: plan.start_date, total_weeks: plan.total_weeks
+      start_date: plan.start_date, total_weeks: plan.total_weeks, events
     },
     weeks: rows.map(r => ({ week_no: r.week_no, ...normalizeStoredWeek(JSON.parse(r.detail)), checkin: r.checkin ? JSON.parse(r.checkin) : null }))
   };
@@ -674,11 +723,12 @@ async function updateWorkout(request, env, user) {
   const workouts = days.filter(day => day.type !== "rust");
   if (!workouts.length) return json({ error: "empty_week", message: "Een schemaweek moet minstens één training bevatten." }, 400);
   const total = workouts.reduce((sum, day) => sum + day.minuten, 0);
-  if (total > intake.uren_per_week * 63) {
-    return json({ error: "week_limit", message: "Deze wijziging overschrijdt je maximale trainingsduur voor de week." }, 400);
-  }
-
-  const updatedWeek = { ...week, dagen: days, totaal_minuten: total };
+  const updatedWeek = {
+    ...week,
+    dagen: days,
+    totaal_minuten: total,
+    weekbelasting_waarschuwing: weekLoadWarning(total, intake) || undefined
+  };
   await env.DB.prepare("UPDATE weeks SET detail = ? WHERE user_id = ? AND week_no = ?")
     .bind(JSON.stringify(updatedWeek), user.id, weekNo).run();
   return json({ week: updatedWeek });
@@ -729,6 +779,7 @@ async function createPlan(request, env, user) {
   await env.DB.batch([
     env.DB.prepare("INSERT INTO account_profiles (user_id, profile, updated_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET profile = excluded.profile, updated_at = excluded.updated_at")
       .bind(user.id, JSON.stringify(c.profile), now),
+    env.DB.prepare("DELETE FROM plan_events WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM weeks WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM plans WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM coach_suggestions WHERE user_id = ?").bind(user.id),
@@ -817,7 +868,7 @@ async function coachChat(request, env, user) {
     return json({ error: "invalid", message: "Kies een training en schrijf een bericht." }, 400);
   }
   const planRow = await env.DB.prepare(
-    "SELECT intake, start_date, total_weeks FROM plans WHERE user_id = ?"
+    "SELECT intake, outline, summary, start_date, total_weeks FROM plans WHERE user_id = ?"
   ).bind(user.id).first();
   if (!planRow) return json({ error: "no_plan", message: "Je hebt nog geen schema." }, 404);
   const planDayOffset = daysBetween(planRow.start_date, today());
@@ -858,6 +909,14 @@ async function coachChat(request, env, user) {
   const userContext = [...history.filter(item => item.role === "user").map(item => item.content), message].join("\n");
   const explicitDuration = requestedDurationMinutes(message);
   const explicitDay = requestedDayNo(message);
+  const requestedDate = requestedEventDate(message, today());
+  const eventIntent = /\b(wedstrijd|wedstrijdje|race|toertocht|clubrit|evenement)\b/i.test(message);
+  const eventWeekNo = requestedDate
+    ? Math.floor(daysBetween(planRow.start_date, requestedDate) / 7) + 1
+    : null;
+  const eventRequest = eventIntent && requestedDate && eventWeekNo >= 1 && eventWeekNo <= planRow.total_weeks
+    ? { date: requestedDate, weekNo: eventWeekNo, dayNo: (parseDate(requestedDate).getUTCDay() + 6) % 7 }
+    : null;
   const requestedDurationInstruction = explicitDuration === null ? ""
     : `De gebruiker noemt expliciet ${explicitDuration} minuten. Gebruik exact deze duur; verkort die niet. `;
   const todayIsScheduled = planActive && calendarWeekNo === weekNo;
@@ -870,23 +929,48 @@ async function coachChat(request, env, user) {
     (continuous ? "Dit is een doorlopend gesprek. Eerdere berichten kunnen over een andere week of training gaan. Voor vragen over vandaag is de expliciete datum en training hieronder leidend; vraag de gebruiker niet welke dag het is. Als de training van vandaag rust is, zeg dat duidelijk. Gebruik het volledige weekschema om verzoeken over een andere weekdag te begrijpen; de week- en dagnummers zijn alleen interne context.\n" : "") +
     `<gebruiker>${JSON.stringify(intake)}</gebruiker>\n` +
     (continuous ? `Vandaag is ${today()} (${DAG_NAMEN[dayNo]}, dag ${dayNo}) in de tijdzone Europe/Amsterdam. ${scheduleState}\nTraining die vandaag volgens het schema gepland staat: ${JSON.stringify(todayWorkout)}.\n` : "") +
+    (eventIntent && !eventRequest
+      ? requestedDate
+        ? `De genoemde evenementdatum ${requestedDate} valt buiten de looptijd van het huidige schema. Leg dit kort uit en vraag of de gebruiker de datum wil aanpassen of een nieuw schema wil maken.`
+        : "De gebruiker noemt een evenement maar geen exacte datum. Vraag eerst om de datum en maak nog geen wijzigingsvoorstel. "
+      : "") +
     requestedDurationInstruction +
     `Trainingsweek ${weekNo}, totaal ${week.totaal_minuten} minuten; maximale weekomvang ${intake.uren_per_week * 63} minuten.\n` +
     `Alle trainingen deze week: ${JSON.stringify(week.dagen)}.\n` +
     `${zoneGuide(intake)}\n` +
     (week.waarschuwing ? `Vaste gezondheidswaarschuwing: ${week.waarschuwing}\n` : "") +
     `Nieuw bericht van de gebruiker: <bericht>${JSON.stringify(message)}</bericht>\n` +
-    `Beantwoord de gebruiker kort en vriendelijk in het Nederlands. Als iemand vraagt wat hij/zij vandaag moet doen, noem de training van vandaag uit de expliciete context hierboven met type, duur, titel, zone en intervallen. Vraag nooit welke dag het is. Als de training hierboven null is, zeg dat er vandaag geen training is ingepland en noem waarom volgens de schema-status; presenteer de laatste beschikbare week niet als training van vandaag. Als iemand om een wijziging vraagt, geef "voorstel" met {"dag":0-6,"type":"${TYPES.join("|")}","minuten":duur_in_minuten,"zone":"Z2 of leeg","titel":"...","beschrijving":"...","blokken":[{"minuten":10,"zone":"Z1","label":"warming-up"}]}. Dag 0 is maandag en dag 5 zaterdag. Zet een specifieke genoemde weekdag altijd in "dag"; neem de titel en aard van de rit letterlijk over. Bij een MTB-rit gebruik type "mtb". Behoud een expliciet door de gebruiker genoemde duur exact; verkort die nooit zelf om binnen de weeklimiet te passen. Als de wijziging daardoor de weeklimiet overschrijdt, geef geen korter voorstel maar leg uit hoeveel tijd er eerst op andere dagen moet worden vrijgemaakt. Als duur niet bekend is, behoud de duur van de training die op die dag staat; anders gebruik een redelijke duur. Als je een training wijzigt die intervalblokken heeft, geef die blokken volledig terug en laat de minuten optellen tot de totale duur. Als de gebruiker zones of intensiteit leeg/open wil laten, geef "zone":"" en laat wattages, hartslagdoelen, zones en intensiteitsinstructies uit de beschrijving en blokken. Bij een rustdag gebruik type "rust". ` +
-    `Als de gebruiker alleen vrijblijvend vraagt wat een alternatief zou zijn, kan je een voorstel tonen maar dit niet meteen toepassen. Een duidelijke opdracht om iets in het schema te zetten of te wijzigen wordt automatisch verwerkt door de server na validatie. Respecteer de weeklimiet. ` +
+    (eventRequest ? `<schema-overzicht>${planRow.outline}</schema-overzicht>\nDe gebruiker noemt een concrete toekomstige wedstrijd of ander evenement op ${eventRequest.date} (week ${eventRequest.weekNo}, dag ${DAG_NAMEN[eventRequest.dayNo]}). Maak verplicht "evenement" met titel, type en beschrijving, plus "schema_aanpassing" met een nieuwe volledige samenvatting en alle weken van het overzicht. Werk de opbouw toe naar dit evenement en plan herstel erna. Deze aanpassing is alleen een voorstel en wordt pas na akkoord opgeslagen. ` : "") +
+    `Beantwoord de gebruiker kort en vriendelijk in het Nederlands. Als iemand vraagt wat hij/zij vandaag moet doen, noem de training van vandaag uit de expliciete context hierboven met type, duur, titel, zone en intervallen. Vraag nooit welke dag het is. Als de training hierboven null is, zeg dat er vandaag geen training is ingepland en noem waarom volgens de schema-status; presenteer de laatste beschikbare week niet als training van vandaag. Als iemand om een wijziging vraagt, geef "voorstel" met {"dag":0-6,"type":"${TYPES.join("|")}","minuten":duur_in_minuten,"zone":"Z2 of leeg","titel":"...","beschrijving":"...","blokken":[{"minuten":10,"zone":"Z1","label":"warming-up"}]}. Dag 0 is maandag en dag 5 zaterdag. Zet een specifieke genoemde weekdag altijd in "dag"; neem de titel en aard van de rit letterlijk over. Bij een MTB-rit gebruik type "mtb". Behoud een expliciet door de gebruiker genoemde duur exact; verkort die nooit zelf om binnen de weekrichtlijn te passen. Als de richtlijn wordt overschreden, maak een voorstel en toon een korte waarschuwing; blokkeer de training niet. Als duur niet bekend is, behoud de duur van de training die op die dag staat; anders gebruik een redelijke duur. Als je een training wijzigt die intervalblokken heeft, geef die blokken volledig terug en laat de minuten optellen tot de totale duur. Als de gebruiker zones of intensiteit leeg/open wil laten, geef "zone":"" en laat wattages, hartslagdoelen, zones en intensiteitsinstructies uit de beschrijving en blokken. Bij een rustdag gebruik type "rust". ` +
+    `Als de gebruiker alleen vrijblijvend vraagt wat een alternatief zou zijn, kan je een voorstel tonen maar dit niet meteen toepassen. Een duidelijke opdracht om iets in het schema te zetten of te wijzigen wordt automatisch verwerkt door de server na validatie. Overschrijding van de weekrichtlijn geeft een waarschuwing, geen blokkade. ` +
     `Bij een gezondheidswaarschuwing mag je alleen rust of zeer rustige duurrit/herstelrit in Z1 of Z2 voorstellen. ` +
     `Gebruik de gekozen meter: ${intake.meter}; hartslag- en vermogenszones alleen als ze bekend zijn, verzin geen bpm, FTP of zones. ` +
     (checkinDue ? `De week is afgelopen en er is nog geen terugblik. Als de gebruiker nu vertelt hoeveel hij/zij heeft getraind en hoe het voelde, geef ook "week_feedback" met {"gedaan_pct":0-100,"uren_gedaan":getal of null,"gevoel":1-5,"klachten":true/false,"opmerking":"..."}. Gebruik alleen wat de gebruiker heeft verteld; als informatie ontbreekt, stel eerst een vraag en geef "week_feedback":null. ` : "Gebruik altijd \"week_feedback\":null. ") +
-    `Als er geen trainingswijziging nodig is, gebruik "voorstel":null. Antwoord uitsluitend met JSON: {"antwoord":"...","voorstel":null,"week_feedback":null}.`;
-  const result = await askValidated(env, prompt, 1800, data => {
+    `Als er geen trainingswijziging nodig is, gebruik "voorstel":null. Antwoord uitsluitend met JSON: {"antwoord":"...","voorstel":null,"week_feedback":null${eventRequest ? ',"evenement":{"titel":"...","type":"wedstrijd|toertocht|clubrit|anders","beschrijving":"..."},"schema_aanpassing":{"samenvatting":"...","weken":[{"week":1,"fase":"basis|opbouw|piek|afbouw|herstel","focus":"...","uren":6}]}' : ""}}.`;
+  const result = await askValidated(env, prompt, eventRequest ? 4000 : 1800, data => {
     const antwoord = cleanText(data.antwoord, 800);
     if (!antwoord) throw new Error("geen antwoord");
     let voorstel = null;
-    if (data.voorstel !== null && data.voorstel !== undefined) {
+    let eventProposal = null;
+    if (eventRequest) {
+      const event = data.evenement;
+      const adjustment = data.schema_aanpassing;
+      if (!event || !adjustment || !Array.isArray(adjustment.weken)) throw new Error("evenement of schema-aanpassing ontbreekt");
+      const eventTitle = cleanText(event.titel, 100);
+      if (!eventTitle) throw new Error("evenementstitel ontbreekt");
+      eventProposal = {
+        kind: "event",
+        title: eventTitle,
+        event_type: ["wedstrijd", "toertocht", "clubrit", "anders"].includes(event.type) ? event.type : "anders",
+        event_date: eventRequest.date,
+        description: cleanText(event.beschrijving, 300),
+        plan_summary: cleanText(adjustment.samenvatting, 600) || planRow.summary,
+        plan_outline: cleanOutline(adjustment.weken, planRow.total_weeks, intake),
+        day_no: eventRequest.dayNo,
+        week_no: eventRequest.weekNo
+      };
+    }
+    if (data.voorstel !== null && data.voorstel !== undefined && !(eventIntent && !eventRequest)) {
       if (!data.voorstel || typeof data.voorstel !== "object" || Array.isArray(data.voorstel)) throw new Error("ongeldig voorstel");
       const { type, minuten, zone, titel, beschrijving } = data.voorstel;
       const targetDay = Number(data.voorstel.dag ?? data.voorstel.day_no ?? dayNo);
@@ -925,19 +1009,7 @@ async function coachChat(request, env, user) {
       if (type !== "rust" && !cleanProposal.beschrijving) throw new Error("trainingsbeschrijving ontbreekt");
       const otherMinutes = week.dagen.filter(day => day.dag !== targetDay && day.type !== "rust")
         .reduce((total, day) => total + day.minuten, 0);
-      if (otherMinutes + cleanProposal.minuten > intake.uren_per_week * 63) {
-        if (requestedMinutes !== null) {
-          const weekLimit = intake.uren_per_week * 63;
-          const available = Math.max(0, weekLimit - otherMinutes);
-          const shortBy = cleanProposal.minuten - available;
-          return {
-            antwoord: `Ik kan de gevraagde rit van ${cleanProposal.minuten} minuten niet inplannen zonder je weeklimiet van ${weekLimit} minuten te overschrijden. Op andere dagen staat nog ${otherMinutes} minuten gepland; maak daar eerst minstens ${shortBy} minuten vrij en vraag het daarna opnieuw.`,
-            voorstel: null,
-            weekFeedback: null
-          };
-        }
-        throw new Error("de aangepaste training overschrijdt de maximale weekomvang");
-      }
+      cleanProposal.weekbelasting_waarschuwing = weekLoadWarning(otherMinutes + cleanProposal.minuten, intake) || undefined;
       voorstel = cleanProposal;
     }
     let weekFeedback = null;
@@ -952,7 +1024,7 @@ async function coachChat(request, env, user) {
       if (uren_gedaan !== null && hours === null) throw new Error("ongeldig aantal trainingsuren");
       weekFeedback = { gedaan_pct, uren_gedaan: hours, gevoel, klachten, opmerking: cleanText(opmerking, 300) };
     }
-    return { antwoord, voorstel, weekFeedback };
+    return { antwoord, voorstel, weekFeedback, eventProposal };
   });
   if (!result.value) return aiError(result);
 
@@ -970,15 +1042,18 @@ async function coachChat(request, env, user) {
 
   const now = Date.now();
   const messageId = randomHex(12);
-  const suggestionId = result.value.voorstel ? randomHex(12) : null;
+  const suggestionId = result.value.voorstel || result.value.eventProposal ? randomHex(12) : null;
   const proposal = result.value.voorstel;
-  const suggestionWorkout = proposal ? {
+  const eventProposal = result.value.eventProposal;
+  const suggestionWorkout = eventProposal || (proposal ? {
     ...proposal,
     huidige: week.dagen.find(day => day.dag === proposal.dag)
-  } : null;
+  } : null);
   const answer = updatedPlan
     ? `Dank voor je terugblik. Ik heb week ${updatedPlan.weeks[updatedPlan.weeks.length - 1].week_no} voor je gemaakt.`
-    : proposal
+    : eventProposal
+      ? `Ik heb een voorstel gemaakt om ${eventProposal.title} op ${eventProposal.event_date} in je schema te zetten en de opbouw ernaartoe aan te passen. Bekijk het voorstel en keur het goed als het klopt.`
+      : proposal
       ? `Ik heb een wijzigingsvoorstel voor ${DAG_NAMEN[proposal.dag]} klaargezet. Bekijk de wijziging hieronder en kies of je die wilt toepassen.`
       : result.value.antwoord;
   const statements = [];
@@ -986,10 +1061,10 @@ async function coachChat(request, env, user) {
     env.DB.prepare("INSERT INTO coach_messages (id, user_id, week_no, day_no, role, content, updated, created_at) VALUES (?, ?, ?, ?, 'user', ?, 0, ?)")
       .bind(randomHex(12), user.id, weekNo, dayNo, message, now),
     env.DB.prepare("INSERT INTO coach_messages (id, user_id, week_no, day_no, role, content, updated, created_at) VALUES (?, ?, ?, ?, 'assistant', ?, 0, ?)")
-      .bind(messageId, user.id, weekNo, proposal?.dag ?? dayNo, answer, now + 1),
+      .bind(messageId, user.id, eventProposal?.week_no ?? weekNo, eventProposal?.day_no ?? proposal?.dag ?? dayNo, answer, now + 1),
     ...(suggestionId ? [env.DB.prepare(
       "INSERT INTO coach_suggestions (id, user_id, message_id, week_no, day_no, workout, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    ).bind(suggestionId, user.id, messageId, weekNo, proposal.dag, JSON.stringify(suggestionWorkout), "pending", now + 1)] : []),
+    ).bind(suggestionId, user.id, messageId, eventProposal?.week_no ?? weekNo, eventProposal?.day_no ?? proposal.dag, JSON.stringify(suggestionWorkout), "pending", now + 1)] : []),
     env.DB.prepare("DELETE FROM coach_messages WHERE user_id = ? AND id NOT IN (SELECT id FROM coach_messages WHERE user_id = ? ORDER BY created_at DESC LIMIT 100)")
       .bind(user.id, user.id)
   );
@@ -1020,13 +1095,37 @@ async function handleCoachSuggestion(request, env, user) {
       .bind(id, user.id).run();
     return json({ status: "dismissed" });
   }
+  const storedWorkout = JSON.parse(suggestion.workout);
+  if (storedWorkout.kind === "event") {
+    const plan = await env.DB.prepare("SELECT start_date, total_weeks FROM plans WHERE user_id = ?")
+      .bind(user.id).first();
+    if (!plan) return json({ error: "not_found", message: "Het bijbehorende schema bestaat niet meer." }, 404);
+    if (!parseDate(storedWorkout.event_date) ||
+        daysBetween(plan.start_date, storedWorkout.event_date) < 0 ||
+        daysBetween(plan.start_date, storedWorkout.event_date) >= plan.total_weeks * 7) {
+      return json({ error: "stale", message: "De evenementdatum valt niet meer binnen je schema." }, 409);
+    }
+    const duplicate = await env.DB.prepare("SELECT id FROM plan_events WHERE user_id = ? AND event_date = ?")
+      .bind(user.id, storedWorkout.event_date).first();
+    if (duplicate) return json({ error: "duplicate", message: "Er staat al een evenement op deze datum." }, 409);
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO plan_events (id, user_id, title, event_type, event_date, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .bind(randomHex(12), user.id, storedWorkout.title, storedWorkout.event_type, storedWorkout.event_date, storedWorkout.description, Date.now()),
+      env.DB.prepare("UPDATE plans SET outline = ?, summary = ? WHERE user_id = ?")
+        .bind(JSON.stringify(storedWorkout.plan_outline), storedWorkout.plan_summary, user.id),
+      env.DB.prepare("UPDATE coach_suggestions SET status = 'applied' WHERE id = ? AND user_id = ? AND status = 'pending'")
+        .bind(id, user.id),
+      env.DB.prepare("UPDATE coach_messages SET updated = 1 WHERE id = ? AND user_id = ?")
+        .bind(suggestion.message_id, user.id)
+    ]);
+    return json({ status: "applied", event_date: storedWorkout.event_date });
+  }
   const plan = await env.DB.prepare("SELECT intake FROM plans WHERE user_id = ?").bind(user.id).first();
   const weekRow = await env.DB.prepare("SELECT detail FROM weeks WHERE user_id = ? AND week_no = ?")
     .bind(user.id, suggestion.week_no).first();
   if (!plan || !weekRow) return json({ error: "not_found", message: "Het bijbehorende schema bestaat niet meer." }, 404);
   const intake = JSON.parse(plan.intake);
   const week = normalizeStoredWeek(JSON.parse(weekRow.detail));
-  const storedWorkout = JSON.parse(suggestion.workout);
   const blocks = cleanWorkoutBlocks(storedWorkout.blokken, storedWorkout.minuten, intake);
   const workout = {
     type: storedWorkout.type,
@@ -1046,13 +1145,12 @@ async function handleCoachSuggestion(request, env, user) {
   )) return json({ error: "invalid", message: "Dit voorstel kan niet worden toegepast vanwege de herstelwaarschuwing." }, 409);
   const otherMinutes = week.dagen.filter(day => day.dag !== suggestion.day_no && day.type !== "rust")
     .reduce((total, day) => total + day.minuten, 0);
-  if (otherMinutes + workout.minuten > intake.uren_per_week * 63) {
-    return json({ error: "invalid", message: "Dit voorstel overschrijdt de maximale weekomvang." }, 409);
-  }
+  const total = otherMinutes + workout.minuten;
   const updatedWeek = {
     ...week,
     dagen: week.dagen.map(day => day.dag === suggestion.day_no ? { ...day, ...workout } : day),
-    totaal_minuten: week.totaal_minuten - (original.type === "rust" ? 0 : original.minuten) + workout.minuten
+    totaal_minuten: total,
+    weekbelasting_waarschuwing: weekLoadWarning(total, intake) || undefined
   };
   await env.DB.batch([
     env.DB.prepare("UPDATE weeks SET detail = ? WHERE user_id = ? AND week_no = ?")
@@ -1099,16 +1197,21 @@ async function checkin(request, env, user) {
 
   const nextNo = last.week_no + 1;
   const nextStart = addDays(plan.start_date, (nextNo - 1) * 7);
+  const nextEnd = addDays(nextStart, 7);
+  const weekEvents = feedback.klachten ? [] : (await env.DB.prepare(
+    "SELECT title, event_type, event_date, description FROM plan_events WHERE user_id = ? AND event_date >= ? AND event_date < ? ORDER BY event_date"
+  ).bind(user.id, nextStart, nextEnd).all()).results || [];
   const prompt = `${intakeBlock(plan.intake)}\nSchema-overzicht: ${JSON.stringify(plan.outline)}\n` +
     `Vorige week (week ${last.week_no}) was gepland als: ${compactWeek(last)} (totaal ${prevPlanned} minuten).\n` +
     `<terugmelding>${JSON.stringify(feedback)}</terugmelding>\n` +
+    (weekEvents.length ? `<evenementen>${JSON.stringify(weekEvents)}</evenementen>\nPlan op de exacte evenementdatum een training van het type "race" met de evenementtitel. Pas de dagen ervoor en erna aan met herstel en lagere belasting. Het evenement mag op een dag staan die niet als vaste trainingsdag is gekozen. ` : "") +
     `Maak nu week ${nextNo} (start maandag ${nextStart}) en pas die aan op de terugmelding: ` +
     `was de week te zwaar, te weinig gedaan of voelde het slecht, ga dan lichter; ging het goed, bouw dan rustig verder volgens het overzicht.` +
     (feedback.klachten ? " De gebruiker meldt klachten: plan alleen rust en zeer rustige duurritten." : "") +
     ` Maximaal ${Math.floor(cap)} minuten in totaal. Formaat: {"uitleg":"2 korte zinnen waarom je dit zo plant","week":${WEEK_FORMAT}}.`;
   const r = await askValidated(env, prompt, 3000, (d) => ({
     uitleg: cleanText(d.uitleg, 400),
-    week: cleanWeek(d.week, plan.intake, cap)
+    week: cleanWeek(d.week, plan.intake, cap, weekEvents)
   }));
   if (!r.value) return aiError(r);
 
@@ -1241,6 +1344,7 @@ async function deleteAccount(request, env, user) {
   const row = await env.DB.prepare("SELECT salt, hash FROM users WHERE id = ?").bind(user.id).first();
   if (!(await safeEqual(await hashPassword(password, row.salt), row.hash))) return json({ error: "credentials", message: "Wachtwoord klopt niet." }, 401);
   await env.DB.batch([
+    env.DB.prepare("DELETE FROM plan_events WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM weeks WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM plans WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM coach_suggestions WHERE user_id = ?").bind(user.id),
