@@ -119,6 +119,17 @@ function cleanWorkoutText(v, max) {
     ? v.replace(/\bRPE\s*\d+(?:\s*[-–/]\s*\d+)?(?:\s*\/\s*10)?/gi, " ").replace(/\s+([,.])/g, "$1").replace(/,\./g, ".")
     : v, max);
 }
+function requestedDurationMinutes(text) {
+  const value = String(text || "").toLowerCase().replace(/(\d),(\d)/g, "$1.$2");
+  const hours = value.match(/\b(\d+(?:\.\d+)?)\s*(?:uur(?:tje|tjes)?|uren|u|h)\b/);
+  const minutes = value.match(/\b(\d+(?:\.\d+)?)\s*(?:min(?:uut|uten)?)\b/);
+  if (hours) return Math.round(Number(hours[1]) * 60 + (minutes ? Number(minutes[1]) : 0));
+  return minutes ? Math.round(Number(minutes[1])) : null;
+}
+function requestedDayNo(text) {
+  const match = String(text || "").toLowerCase().match(/\b(maandag|dinsdag|woensdag|donderdag|vrijdag|zaterdag|zondag)\b/);
+  return match ? DAG_NAMEN.indexOf(match[1]) : null;
+}
 function cleanNum(v, min, max) {
   if (v === "" || v === null || v === undefined) return null;
   const n = Number(v);
@@ -845,6 +856,10 @@ async function coachChat(request, env, user) {
     : await threadMessages(env, user.id, weekNo, dayNo);
   const transcript = history.slice(-10).map(item => ({ role: item.role, content: item.content }));
   const userContext = [...history.filter(item => item.role === "user").map(item => item.content), message].join("\n");
+  const explicitDuration = requestedDurationMinutes(message);
+  const explicitDay = requestedDayNo(message);
+  const requestedDurationInstruction = explicitDuration === null ? ""
+    : `De gebruiker noemt expliciet ${explicitDuration} minuten. Gebruik exact deze duur; verkort die niet. `;
   const todayIsScheduled = planActive && calendarWeekNo === weekNo;
   const todayWorkout = todayIsScheduled ? week.dagen.find(item => item.dag === dayNo) : null;
   const scheduleState = planDayOffset < 0 ? "Het schema is nog niet begonnen."
@@ -855,12 +870,13 @@ async function coachChat(request, env, user) {
     (continuous ? "Dit is een doorlopend gesprek. Eerdere berichten kunnen over een andere week of training gaan. Voor vragen over vandaag is de expliciete datum en training hieronder leidend; vraag de gebruiker niet welke dag het is. Als de training van vandaag rust is, zeg dat duidelijk. Gebruik het volledige weekschema om verzoeken over een andere weekdag te begrijpen; de week- en dagnummers zijn alleen interne context.\n" : "") +
     `<gebruiker>${JSON.stringify(intake)}</gebruiker>\n` +
     (continuous ? `Vandaag is ${today()} (${DAG_NAMEN[dayNo]}, dag ${dayNo}) in de tijdzone Europe/Amsterdam. ${scheduleState}\nTraining die vandaag volgens het schema gepland staat: ${JSON.stringify(todayWorkout)}.\n` : "") +
+    requestedDurationInstruction +
     `Trainingsweek ${weekNo}, totaal ${week.totaal_minuten} minuten; maximale weekomvang ${intake.uren_per_week * 63} minuten.\n` +
     `Alle trainingen deze week: ${JSON.stringify(week.dagen)}.\n` +
     `${zoneGuide(intake)}\n` +
     (week.waarschuwing ? `Vaste gezondheidswaarschuwing: ${week.waarschuwing}\n` : "") +
     `Nieuw bericht van de gebruiker: <bericht>${JSON.stringify(message)}</bericht>\n` +
-    `Beantwoord de gebruiker kort en vriendelijk in het Nederlands. Als iemand vraagt wat hij/zij vandaag moet doen, noem de training van vandaag uit de expliciete context hierboven met type, duur, titel, zone en intervallen. Vraag nooit welke dag het is. Als de training hierboven null is, zeg dat er vandaag geen training is ingepland en noem waarom volgens de schema-status; presenteer de laatste beschikbare week niet als training van vandaag. Als iemand om een wijziging vraagt, geef "voorstel" met {"dag":0-6,"type":"${TYPES.join("|")}","minuten":60,"zone":"Z2 of leeg","titel":"...","beschrijving":"...","blokken":[{"minuten":10,"zone":"Z1","label":"warming-up"}]}. Dag 0 is maandag en dag 5 zaterdag. Zet een specifieke genoemde weekdag altijd in "dag"; neem de titel en aard van de rit letterlijk over. Bij een MTB-rit gebruik type "mtb". Als duur niet bekend is, behoud de duur van de training die op die dag staat; anders gebruik een redelijke duur. Als je een training wijzigt die intervalblokken heeft, geef die blokken volledig terug en laat de minuten optellen tot de totale duur. Als de gebruiker zones of intensiteit leeg/open wil laten, geef "zone":"" en laat wattages, hartslagdoelen, zones en intensiteitsinstructies uit de beschrijving en blokken. Bij een rustdag gebruik type "rust". ` +
+    `Beantwoord de gebruiker kort en vriendelijk in het Nederlands. Als iemand vraagt wat hij/zij vandaag moet doen, noem de training van vandaag uit de expliciete context hierboven met type, duur, titel, zone en intervallen. Vraag nooit welke dag het is. Als de training hierboven null is, zeg dat er vandaag geen training is ingepland en noem waarom volgens de schema-status; presenteer de laatste beschikbare week niet als training van vandaag. Als iemand om een wijziging vraagt, geef "voorstel" met {"dag":0-6,"type":"${TYPES.join("|")}","minuten":duur_in_minuten,"zone":"Z2 of leeg","titel":"...","beschrijving":"...","blokken":[{"minuten":10,"zone":"Z1","label":"warming-up"}]}. Dag 0 is maandag en dag 5 zaterdag. Zet een specifieke genoemde weekdag altijd in "dag"; neem de titel en aard van de rit letterlijk over. Bij een MTB-rit gebruik type "mtb". Behoud een expliciet door de gebruiker genoemde duur exact; verkort die nooit zelf om binnen de weeklimiet te passen. Als de wijziging daardoor de weeklimiet overschrijdt, geef geen korter voorstel maar leg uit hoeveel tijd er eerst op andere dagen moet worden vrijgemaakt. Als duur niet bekend is, behoud de duur van de training die op die dag staat; anders gebruik een redelijke duur. Als je een training wijzigt die intervalblokken heeft, geef die blokken volledig terug en laat de minuten optellen tot de totale duur. Als de gebruiker zones of intensiteit leeg/open wil laten, geef "zone":"" en laat wattages, hartslagdoelen, zones en intensiteitsinstructies uit de beschrijving en blokken. Bij een rustdag gebruik type "rust". ` +
     `Als de gebruiker alleen vrijblijvend vraagt wat een alternatief zou zijn, kan je een voorstel tonen maar dit niet meteen toepassen. Een duidelijke opdracht om iets in het schema te zetten of te wijzigen wordt automatisch verwerkt door de server na validatie. Respecteer de weeklimiet. ` +
     `Bij een gezondheidswaarschuwing mag je alleen rust of zeer rustige duurrit/herstelrit in Z1 of Z2 voorstellen. ` +
     `Gebruik de gekozen meter: ${intake.meter}; hartslag- en vermogenszones alleen als ze bekend zijn, verzin geen bpm, FTP of zones. ` +
@@ -875,21 +891,30 @@ async function coachChat(request, env, user) {
       const { type, minuten, zone, titel, beschrijving } = data.voorstel;
       const targetDay = Number(data.voorstel.dag ?? data.voorstel.day_no ?? dayNo);
       if (!Number.isInteger(targetDay) || targetDay < 0 || targetDay > 6) throw new Error("ongeldige trainingsdag");
+      if (explicitDuration !== null && explicitDay !== null && targetDay !== explicitDay) {
+        throw new Error("het voorstel gebruikt niet de expliciet genoemde trainingsdag");
+      }
       if (!TYPES.includes(type) || !validWorkoutZone(zone, intake)) throw new Error("ongeldige training");
+      const requestedMinutes = explicitDuration !== null && (explicitDay === null || explicitDay === targetDay)
+        ? explicitDuration : null;
+      const proposalMinutes = Number(requestedMinutes ?? minuten);
       if (week.waarschuwing && !(
         type === "rust" || (["duurrit", "herstelrit"].includes(type) && ["Z1", "Z2"].includes(zone))
       )) throw new Error("bij een gezondheidswaarschuwing zijn alleen rust en rustige Z1/Z2-training toegestaan");
-      if (type !== "rust" && (!Number.isInteger(Number(minuten)) ||
-          Number(minuten) < 20 || Number(minuten) > 360)) throw new Error("ongeldige trainingsduur of dag");
+      if (type !== "rust" && (!Number.isInteger(proposalMinutes) ||
+          proposalMinutes < 20 || proposalMinutes > 360)) throw new Error("ongeldige trainingsduur of dag");
       const leaveIntensityOpen = /(?:zone|intensiteit|hartslag|vermogen).{0,35}(?:leeg|open|vrij)|(?:leeg|open).{0,35}(?:zone|intensiteit)/i.test(userContext);
+      const proposalDescription = cleanWorkoutText(beschrijving, 500);
       const cleanProposal = {
         type,
-        minuten: type === "rust" ? 0 : Number(minuten),
+        minuten: type === "rust" ? 0 : proposalMinutes,
         zone: type === "rust" || leaveIntensityOpen ? "" : zone,
         titel: type === "rust" ? "Rustdag" : cleanText(titel, 80),
         beschrijving: type === "rust" ? "" : leaveIntensityOpen
           ? "Intensiteit en trainingszone zijn nog open."
-          : cleanWorkoutText(beschrijving, 500),
+          : requestedMinutes !== null
+            ? proposalDescription.replace(/\s*\([^)]*(?:aangepast|teruggebracht|verkort)[^)]*\)/gi, "").trim()
+            : proposalDescription,
         dag: targetDay
       };
       if (type !== "rust") {
@@ -901,6 +926,16 @@ async function coachChat(request, env, user) {
       const otherMinutes = week.dagen.filter(day => day.dag !== targetDay && day.type !== "rust")
         .reduce((total, day) => total + day.minuten, 0);
       if (otherMinutes + cleanProposal.minuten > intake.uren_per_week * 63) {
+        if (requestedMinutes !== null) {
+          const weekLimit = intake.uren_per_week * 63;
+          const available = Math.max(0, weekLimit - otherMinutes);
+          const shortBy = cleanProposal.minuten - available;
+          return {
+            antwoord: `Ik kan de gevraagde rit van ${cleanProposal.minuten} minuten niet inplannen zonder je weeklimiet van ${weekLimit} minuten te overschrijden. Op andere dagen staat nog ${otherMinutes} minuten gepland; maak daar eerst minstens ${shortBy} minuten vrij en vraag het daarna opnieuw.`,
+            voorstel: null,
+            weekFeedback: null
+          };
+        }
         throw new Error("de aangepaste training overschrijdt de maximale weekomvang");
       }
       voorstel = cleanProposal;
@@ -990,14 +1025,16 @@ async function handleCoachSuggestion(request, env, user) {
     .bind(user.id, suggestion.week_no).first();
   if (!plan || !weekRow) return json({ error: "not_found", message: "Het bijbehorende schema bestaat niet meer." }, 404);
   const intake = JSON.parse(plan.intake);
-  const week = JSON.parse(weekRow.detail);
+  const week = normalizeStoredWeek(JSON.parse(weekRow.detail));
   const storedWorkout = JSON.parse(suggestion.workout);
+  const blocks = cleanWorkoutBlocks(storedWorkout.blokken, storedWorkout.minuten, intake);
   const workout = {
     type: storedWorkout.type,
     minuten: storedWorkout.minuten,
     zone: storedWorkout.zone,
     titel: storedWorkout.titel,
-    beschrijving: storedWorkout.beschrijving
+    beschrijving: storedWorkout.beschrijving,
+    ...(blocks ? { blokken: blocks } : {})
   };
   const original = week.dagen.find(day => day.dag === suggestion.day_no);
   if (!original) return json({ error: "invalid_day", message: "Deze trainingsdag bestaat niet meer." }, 409);

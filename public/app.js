@@ -283,8 +283,7 @@ function renderNav(activePage = state.page) {
     ["plan", "Plan", () => state.data?.plan ? viewPlan() : viewIntake()],
     ["coach", "Coach", viewCoach],
     ["activities", "Activiteiten", viewActivities],
-    ["garmin", "Garmin koppelen", viewGarmin],
-    ["wahoo", "Wahoo koppelen", viewWahoo],
+    ["connections", "Koppelingen", viewConnections],
     ["account", "Account", viewAccount]
   ];
   for (const [page, label, action] of pages) {
@@ -594,30 +593,19 @@ function viewActivities() {
     h("section", { class: "card stack activity-empty" },
       h("span", { class: "activity-empty-icon", "aria-hidden": "true", text: "↗" }),
       h("h2", { text: "Nog geen activiteiten gekoppeld" }),
-      h("p", { class: "muted", text: "We bouwen aan een veilige Garmin-koppeling. Als Garmin toegang verleent, kunnen je recente ritten hier verschijnen en kun je ze met je coach bespreken." }),
-      h("button", { class: "btn", type: "button", text: "Bekijk Garmin-koppeling", onclick: viewGarmin })),
-    h("section", { class: "card integration-card stack" },
-      h("div", { class: "integration-mark strava-mark", "aria-hidden": "true", text: "S" }),
-      h("div", {},
-        h("h2", { text: "Strava" }),
-        h("p", { class: "muted", text: "Een koppeling met Strava is nog niet beschikbaar." }))),
-    h("section", { class: "card integration-card stack" },
-      h("div", { class: "integration-mark wahoo-mark", "aria-hidden": "true", text: "W" }),
-      h("div", {},
-        h("h2", { text: "Wahoo" }),
-        h("p", { class: "muted", text: "De Wahoo-koppeling is voorbereid, maar nog niet actief." }),
-        h("button", { class: "btn ghost small", type: "button", text: "Bekijk Wahoo-koppeling", onclick: viewWahoo })))
+      h("p", { class: "muted", text: "Bekijk de status en plannen voor automatische synchronisatie op de pagina Koppelingen." }),
+      h("button", { class: "btn", type: "button", text: "Bekijk koppelingen", onclick: viewConnections }))
   );
 }
 
-function viewGarmin() {
-  state.page = "garmin";
-  renderNav("garmin");
+function viewConnections() {
+  state.page = "connections";
+  renderNav("connections");
   show(
     h("div", { class: "page-heading" },
       h("p", { class: "eyebrow", text: "ACTIVITEITEN AUTOMATISEREN" }),
-      h("h1", { text: "Koppel Garmin" }),
-      h("p", { class: "muted", text: "We bereiden de koppeling voor. Je Garmin-account is nog niet verbonden." })),
+      h("h1", { text: "Koppelingen" }),
+      h("p", { class: "muted", text: "Bekijk hier de status van koppelingen voor het automatisch ophalen van je trainingen." })),
     h("section", { class: "card garmin-card stack" },
       h("div", { class: "garmin-heading" },
         h("span", { class: "garmin-mark", "aria-hidden": "true" }, "G"),
@@ -633,18 +621,7 @@ function viewGarmin() {
         h("span", { class: "status-dot", "aria-hidden": "true" }),
         "Koppeling nog niet actief — wacht op Garmin API-toegang."),
       h("button", { class: "btn", type: "button", disabled: true, text: "Garmin binnenkort koppelen" }),
-      h("p", { class: "hint", text: "Er wordt nog geen Garmin-login gevraagd en er worden geen gegevens gesynchroniseerd." }))
-  );
-}
-
-function viewWahoo() {
-  state.page = "wahoo";
-  renderNav("wahoo");
-  show(
-    h("div", { class: "page-heading" },
-      h("p", { class: "eyebrow", text: "ACTIVITEITEN AUTOMATISEREN" }),
-      h("h1", { text: "Koppel Wahoo" }),
-      h("p", { class: "muted", text: "We bereiden de koppeling voor. Je Wahoo-account is nog niet verbonden." })),
+      h("p", { class: "hint", text: "Er wordt nog geen Garmin-login gevraagd en er worden geen gegevens gesynchroniseerd." })),
     h("section", { class: "card garmin-card stack" },
       h("div", { class: "garmin-heading" },
         h("span", { class: "wahoo-mark", "aria-hidden": "true", text: "W" }),

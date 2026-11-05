@@ -65,6 +65,17 @@ globalThis.fetch = async (url, init) => {
       antwoord: "Ik heb de MTB-rit op zaterdag in je schema gezet.",
       voorstel: { dag: 5, type: "mtb", minuten: 45, zone: "Z2", titel: "MTB-rit met de club", beschrijving: "45 minuten op Z2." }
     });
+    else if (coachMode === "mtb-two-hour") content = JSON.stringify({
+      antwoord: "Ik heb de MTB-rit op zaterdag in je schema gezet.",
+      voorstel: {
+        dag: 5, type: "mtb", minuten: 60, zone: "Z2", titel: "Club MTB-rit",
+        beschrijving: "2 uur MTB-rit met de club in Appelscha (aangepast naar 60 min om binnen de weeklimiet te blijven).",
+        blokken: [
+          { minuten: 60, zone: "Z2", label: "MTB-rit met de club" },
+          { minuten: 60, zone: "Z3", label: "Tempo in de groep" }
+        ]
+      }
+    });
     else if (coachMode === "today") content = JSON.stringify({
       antwoord: "Vandaag staat je rustige duurtraining van 45 minuten in Z2 gepland.",
       voorstel: null,
@@ -557,6 +568,75 @@ test("coach zet een club-MTB-rit op de genoemde zaterdag en laat intensiteit lee
   assert.equal(saturday.beschrijving, "Intensiteit en trainingszone zijn nog open.");
   assert.deepEqual(after.data.weeks[0].dagen.find(day => day.dag === 1), before.dagen.find(day => day.dag === 1));
   assert.ok(lastGroqPrompt.includes("komende zaterdag een MTB-rit"));
+});
+
+test("coach houdt een expliciete MTB-duur van twee uur aan en voorstel kan worden toegepast", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env, "mtb-twee-uur");
+  await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  const userId = env.DB.db.prepare("SELECT id FROM users WHERE username = ?").get("mtb-twee-uur").id;
+  const weekRow = env.DB.db.prepare("SELECT detail FROM weeks WHERE user_id = ? AND week_no = 1").get(userId);
+  const week = JSON.parse(weekRow.detail);
+  for (const [dayNo, minutes] of [[1, 80], [3, 80], [5, 60], [6, 90]]) {
+    const day = week.dagen.find(item => item.dag === dayNo);
+    day.minuten = minutes;
+  }
+  week.dagen.find(day => day.dag === 5).beschrijving = "Rustig, RPE 4.";
+  week.totaal_minuten = week.dagen.filter(day => day.type !== "rust").reduce((total, day) => total + day.minuten, 0);
+  env.DB.db.prepare("UPDATE weeks SET detail = ? WHERE user_id = ? AND week_no = 1").run(JSON.stringify(week), userId);
+
+  coachMode = "mtb-two-hour";
+  const reply = await api(env, "POST", "/api/coach/chat", {
+    week_no: 1, day_no: 0,
+    bericht: "Ik ga zaterdag met de club 2 uurtjes MTB'en in Appelscha. Zet dat op zaterdag in mijn schema.",
+    global: true
+  }, { cookie });
+  coachMode = "proposal";
+  assert.equal(reply.status, 200, JSON.stringify(reply.data));
+  assert.equal(reply.data.voorstel.workout.minuten, 120);
+  assert.equal(reply.data.voorstel.workout.dag, 5);
+  assert.ok(!reply.data.voorstel.workout.beschrijving.includes("aangepast naar 60"));
+  assert.ok(lastGroqPrompt.includes("Gebruik exact deze duur"));
+
+  const applied = await api(env, "POST", "/api/coach/suggestions", {
+    id: reply.data.voorstel.id, action: "apply"
+  }, { cookie });
+  assert.equal(applied.status, 200, JSON.stringify(applied.data));
+  const plan = await api(env, "GET", "/api/plan", undefined, { cookie });
+  const saturday = plan.data.weeks[0].dagen.find(day => day.dag === 5);
+  assert.equal(saturday.minuten, 120);
+  assert.equal(saturday.type, "mtb");
+  assert.ok(!saturday.beschrijving.includes("RPE"));
+  assert.deepEqual(saturday.blokken, [
+    { minuten: 60, zone: "Z2", label: "MTB-rit met de club" },
+    { minuten: 60, zone: "Z3", label: "Tempo in de groep" }
+  ]);
+});
+
+test("coach verkort een expliciete rit niet als die de weeklimiet overschrijdt", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env, "mtb-limiet");
+  await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  const userId = env.DB.db.prepare("SELECT id FROM users WHERE username = ?").get("mtb-limiet").id;
+  const weekRow = env.DB.db.prepare("SELECT detail FROM weeks WHERE user_id = ? AND week_no = 1").get(userId);
+  const week = JSON.parse(weekRow.detail);
+  for (const [dayNo, minutes] of [[1, 100], [3, 100], [5, 60], [6, 100]]) {
+    week.dagen.find(item => item.dag === dayNo).minuten = minutes;
+  }
+  week.totaal_minuten = week.dagen.filter(day => day.type !== "rust").reduce((total, day) => total + day.minuten, 0);
+  env.DB.db.prepare("UPDATE weeks SET detail = ? WHERE user_id = ? AND week_no = 1").run(JSON.stringify(week), userId);
+
+  coachMode = "mtb-two-hour";
+  const reply = await api(env, "POST", "/api/coach/chat", {
+    week_no: 1, day_no: 0,
+    bericht: "Ik ga zaterdag met de club 2 uurtjes MTB'en in Appelscha. Zet dat op zaterdag in mijn schema.",
+    global: true
+  }, { cookie });
+  coachMode = "proposal";
+  assert.equal(reply.status, 200, JSON.stringify(reply.data));
+  assert.equal(reply.data.voorstel, null);
+  assert.match(reply.data.antwoord, /gevraagde rit van 120 minuten/);
+  assert.match(reply.data.antwoord, /minstens 42 minuten vrij/);
 });
 
 test("coach haalt de weekterugblik op in chat en maakt daarna de volgende week", async () => {

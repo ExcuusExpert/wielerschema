@@ -117,6 +117,9 @@ youthBirthDate.setUTCFullYear(youthBirthDate.getUTCFullYear() - 17);
 vm.runInContext(fs.readFileSync("public/app.js", "utf8"), sandbox, { filename: "app.js" });
 await tick();
 ok(text().includes("Jouw wielerdoel") && text().includes("Maak mijn schema") && text().includes("Jeugdrenner?"), "publieke startpagina zichtbaar voor een bezoeker");
+ok((fs.readFileSync("public/index.html", "utf8").match(/brand-mark">WS/g) || []).length === 2 &&
+  fs.readFileSync("public/favicon.svg", "utf8").includes(">WS</text>"),
+  "logo en favicon tonen alleen WS");
 
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Maak mijn schema")[0].click();
 ok(text().includes("Account maken") && text().includes("Terug naar startpagina"), "registreerscherm is bereikbaar vanaf de startpagina");
@@ -256,15 +259,16 @@ ok(sandbox.copiedText.includes("Duration: 70 minuten") &&
 
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Activiteiten")[0].click();
 ok(text().includes("Nog geen activiteiten gekoppeld") && !text().includes("TrainingPeaks"), "activiteiten-tab toont status zonder importfunctie");
-ok(text().includes("Een koppeling met Strava is nog niet beschikbaar"), "Strava staat eerlijk als toekomstige koppeling aangegeven");
-find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Garmin koppelen")[0].click();
-ok(text().includes("Koppel Garmin") && text().includes("Koppeling nog niet actief") &&
+ok(!text().includes("Strava") && !text().includes("strava"), "Strava is uit de activiteitenpagina verwijderd");
+find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Koppelingen")[0].click();
+ok(text().includes("Koppelingen") && text().includes("GARMIN CONNECT") && text().includes("WAHOO") &&
+  !find(root.nav, e => e.tagName === "BUTTON" && /Garmin koppelen|Wahoo koppelen/.test(e.textContent)).length,
+  "Garmin en Wahoo staan samen op één koppelingenpagina");
+ok(text().includes("Koppeling nog niet actief") &&
   find(root.app, e => e.tagName === "BUTTON" && e.attrs.disabled !== undefined && e.textContent === "Garmin binnenkort koppelen").length === 1,
-  "Garmin-pagina toont een duidelijke status zonder een niet-bestaande koppeling te suggereren");
-find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Wahoo koppelen")[0].click();
-ok(text().includes("Koppel Wahoo") && text().includes("Koppeling nog niet actief") &&
-  find(root.app, e => e.tagName === "BUTTON" && e.attrs.disabled !== undefined && e.textContent === "Wahoo binnenkort koppelen").length === 1,
-  "Wahoo-pagina is voorbereid zonder een nepverbinding of synchronisatie");
+  "Garmin toont duidelijk dat de koppeling nog niet beschikbaar is");
+ok(find(root.app, e => e.tagName === "BUTTON" && e.attrs.disabled !== undefined && e.textContent === "Wahoo binnenkort koppelen").length === 1,
+  "Wahoo toont duidelijk dat de koppeling nog niet beschikbaar is");
 
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Coach")[0].click();
 await tick();
