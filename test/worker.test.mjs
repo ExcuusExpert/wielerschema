@@ -57,7 +57,12 @@ globalThis.fetch = async (url, init) => {
     });
   } else if (prompt.includes("Maak nu week")) content = JSON.stringify({ uitleg: "Iets rustiger.", week: weekJson({ minutes: 200 }) });
   else if (prompt.includes("Nieuw bericht van de gebruiker")) {
-    if (coachMode === "mtb-first") content = JSON.stringify({
+    if (coachMode === "rpe") content = JSON.stringify({
+      antwoord: "Vandaag een rustige duurtraining. De intensiteit wordt gemeten met hartslagzones en een RPE-score om overbelasting te voorkomen.",
+      voorstel: null,
+      week_feedback: null
+    });
+    else if (coachMode === "mtb-first") content = JSON.stringify({
       antwoord: "Hoe lang duurt de rit ongeveer? Ik kan de intensiteit open laten.",
       voorstel: null
     });
@@ -324,6 +329,20 @@ test("vragen van de coach", async () => {
   assert.equal(r.data.vragen[0].id, "v1");
 });
 
+test("AI-coach verwijdert RPE-zinnen uit zichtbare antwoorden", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env);
+  await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  coachMode = "rpe";
+  const reply = await api(env, "POST", "/api/coach/chat", {
+    week_no: 1, day_no: 0, bericht: "Hoe intensief is het?", global: true
+  }, { cookie });
+  coachMode = "proposal";
+  assert.equal(reply.status, 200, JSON.stringify(reply.data));
+  assert.match(reply.data.antwoord, /rustige duurtraining/);
+  assert.doesNotMatch(reply.data.antwoord, /RPE/i);
+});
+
 test("training handmatig aanpassen slaat alleen een geldige wijziging op", async () => {
   const env = makeEnv();
   const cookie = await signup(env);
@@ -402,8 +421,8 @@ test("een week boven de richtlijn kan worden opgeslagen met een duidelijke waars
   }, { cookie });
   assert.equal(updated.status, 200, JSON.stringify(updated.data));
   assert.ok(updated.data.week.totaal_minuten > intake.uren_per_week * 63);
-  assert.match(updated.data.week.weekbelasting_waarschuwing, /boven je richtlijn/);
-  assert.match(updated.data.week.weekbelasting_waarschuwing, /ouder\/verzorger en jeugdtrainer/);
+  assert.match(updated.data.week.weekbelasting_waarschuwing, /meer dan je richtlijn/);
+  assert.doesNotMatch(updated.data.week.weekbelasting_waarschuwing, /ouder\/verzorger|arts|overleg/i);
   assert.ok(created.data.weeks[0].dagen.find(day => day.dag === 3));
 });
 
@@ -667,12 +686,12 @@ test("coach houdt een expliciete rit aan boven de weekrichtlijn en waarschuwt", 
   coachMode = "proposal";
   assert.equal(reply.status, 200, JSON.stringify(reply.data));
   assert.equal(reply.data.voorstel.workout.minuten, 120);
-  assert.match(reply.data.voorstel.workout.weekbelasting_waarschuwing, /boven je richtlijn/);
+  assert.match(reply.data.voorstel.workout.weekbelasting_waarschuwing, /meer dan je richtlijn/);
   const applied = await api(env, "POST", "/api/coach/suggestions", {
     id: reply.data.voorstel.id, action: "apply"
   }, { cookie });
   assert.equal(applied.status, 200, JSON.stringify(applied.data));
-  assert.match(applied.data.week.weekbelasting_waarschuwing, /boven je richtlijn/);
+  assert.match(applied.data.week.weekbelasting_waarschuwing, /meer dan je richtlijn/);
 });
 
 test("coach maakt een voorstel voor een wedstrijd en aangepaste schema-opbouw", async () => {
@@ -856,7 +875,7 @@ test("check-in: volgende week, geen dubbele check-in, klachten maken het licht",
   assert.equal(r.data.weeks[0].checkin.klachten, true);
   const w2 = r.data.weeks[1];
   assert.ok(w2.totaal_minuten <= w1total * 0.5 + 20, `week 2 = ${w2.totaal_minuten}, week 1 = ${w1total}`);
-  assert.match(w2.waarschuwing, /arts/);
+  assert.match(w2.waarschuwing, /extra licht en gericht op herstel/);
 
   const dubbel = await api(env, "POST", "/api/plan/checkin", { week_no: 1, gedaan_pct: 90, gevoel: 4 }, { cookie });
   assert.equal(dubbel.status, 409);

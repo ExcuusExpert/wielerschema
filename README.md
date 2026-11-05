@@ -9,9 +9,10 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 - Account maken en inloggen (gebruikersnaam en wachtwoord, geen e-mail nodig).
 - Publieke startpagina met uitleg en aparte keuzes om in te loggen of een account te maken.
 - Intakewizard in drie stappen: doel, geboortedatum en niveau; trainingstijd en dagen; meetapparatuur, beperkingen en overige trainingservaring.
-- Jeugdrenners van 12–17 krijgen terughoudender coachinstructies en een zichtbare oproep om een ouder/verzorger en jeugdtrainer mee te laten kijken.
+- Voor jeugdrenners van 12–17 houdt de coach rekening met leeftijd, herstel en plezier.
 - Intake: doel, datum, niveau, uren per week, beschikbare dagen, ervaring en beperkingen. Een geboortedatum is verplicht; alleen de berekende leeftijd gaat naar Groq.
 - Keuze uit vermogensmeter, hartslagmeter, beide of geen van beide. Vijf hartslagzones worden berekend uit je maximale hartslag. Voor vermogen vul je je FTP in en kies je vijf of zeven zones; de standaardgrenzen volgen FTP-percentages en kunnen worden aangepast.
+- Trainingsintensiteit wordt weergegeven met de ingestelde hartslag- en/of vermogenszones.
 - Activiteitenpagina's voor Garmin en Wahoo zijn voorbereid, maar beide koppelingen wachten op officiële API-toegang. Er worden nog geen externe activiteiten gesynchroniseerd.
 - AI stelt maximaal 5 vervolgvragen in een chatweergave, maakt een overzicht van alle weken en werkt week 1 uit.
 - Eén doorlopende, WhatsApp-achtige chat met de coach; de coach krijgt de datum en de training van vandaag uit je actuele schema mee, zonder dat je week of dag hoeft te kiezen.
@@ -30,7 +31,7 @@ Nog niet: wachtwoord vergeten (er is geen e-mail), automatische koppelingen met 
 ## Veiligheid en vangrails
 
 - De AI schrijft nooit rechtstreeks naar de database: de worker controleert elk antwoord. Trainingen en wijzigingen worden opgeschoond en de weektotalen begrensd op het maximale aantal uren; een concreet genoemd evenement kan op de opgegeven dag worden gezet.
-- Meldt iemand klachten, dan wordt de volgende week hard begrensd op de helft, met een vaste waarschuwing om een arts of fysiotherapeut te raadplegen (dat staat los van wat de AI zegt).
+- Meldt iemand klachten, dan wordt de volgende week hard begrensd op de helft en krijgt de gebruiker een korte melding dat de week extra licht en op herstel gericht is.
 - Wachtwoorden worden met PBKDF2 versleuteld, sessies zitten in een beveiligde cookie, schrijfacties van andere websites worden geweigerd, en er zijn limieten voor registreren, inloggen en AI-gebruik per gebruiker en per dag.
 - De app staat maximaal 100 AI-aanvragen per account per dag toe en 2000 aanvragen totaal per dag. Dit is ruim voor een kleine groep, maar er blijft een gezamenlijke noodlimiet tegen misbruik en onverwachte kosten.
 - IP-adressen worden nooit zelf opgeslagen, alleen een dagelijks wisselende hash voor de limieten.
@@ -68,7 +69,7 @@ node test/frontend-smoke.mjs   # rooktest van de website
 
 ## Eerst nog invullen of nakijken
 
-1. **Contactgegevens in `public/privacy.html`.** Zoek `VUL_HIER_JE_CONTACTGEGEVENS_IN` en vervang dat. Zonder dit mag je de site niet openbaar maken.
+1. **Controleer de contactgegevens in `public/privacy.html`.** Controleer dat het opgegeven privacycontactadres klopt voordat je de site openbaar maakt.
 2. **Privacy en AVG.** De app verwerkt trainingsgegevens en mogelijk gezondheidsinformatie (klachten, beperkingen) van anderen en stuurt die naar Groq in de VS. Ik ben geen jurist, dus laat de privacyverklaring en je verplichtingen (zoals verwerkersafspraken met Cloudflare en Groq) nakijken, vooral omdat het openbaar is. Houd de invoer beperkt: velden voor klachten zijn optioneel.
 3. **Kosten en limieten van Groq.** Een schema is een flinke aanvraag. De app begrenst op 100 AI-aanvragen per gebruiker per dag en 2000 voor iedereen samen (zie bovenin `src/worker.js`). Controleer Groq-kosten en pas deze limieten aan als dat nodig is.
 4. **Wachtwoord vergeten.** Zonder e-mail kan dat niet. Een goede volgende stap is inloggen met een e-maillink (via een dienst zoals Resend), ook handig voor eventuele meldingen.

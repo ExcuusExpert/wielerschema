@@ -116,7 +116,13 @@ youthBirthDate.setUTCFullYear(youthBirthDate.getUTCFullYear() - 17);
 
 vm.runInContext(fs.readFileSync("public/app.js", "utf8"), sandbox, { filename: "app.js" });
 await tick();
-ok(text().includes("Jouw wielerdoel") && text().includes("Maak mijn schema") && text().includes("Jeugdrenner?"), "publieke startpagina zichtbaar voor een bezoeker");
+ok(text().includes("Jouw wielerdoel") && text().includes("Maak mijn schema") && text().includes("jeugdrenners van 12 tot 18 jaar") &&
+  text().includes("hartslag- en/of vermogenszones") && !text().includes("RPE"),
+  "startpagina beschrijft zone-intensiteit zonder RPE- of waarschuwingsblokken");
+const privacyHtml = fs.readFileSync("public/privacy.html", "utf8");
+ok(privacyHtml.includes("wielerschema@outlook.com") && privacyHtml.includes("geen medisch advies") &&
+  privacyHtml.includes("ouder/verzorger") && !privacyHtml.includes("VUL_HIER_JE_CONTACTGEGEVENS_IN"),
+  "privacyverklaring bevat contactgegevens en de uitgebreide gebruiksinformatie");
 ok((fs.readFileSync("public/index.html", "utf8").match(/class="brand-logo" src="logo\.png"/g) || []).length === 2 &&
   fs.readFileSync("public/privacy.html", "utf8").includes('class="brand-logo" src="logo.png"') &&
   fs.readFileSync("public/index.html", "utf8").includes('<link rel="icon" href="logo.png" type="image/png">') &&
@@ -132,7 +138,7 @@ inputs.find(i => i.attrs.name === "password").value = "een-lang-wachtwoord";
 inputs.find(i => i.attrs.name === "consent").checked = true;
 await submit(find(root.app, e => e.tagName === "FORM")[0]);
 ok(text().includes("Jouw doel") && find(root.app, e => e.className === "wizard-progress").length === 1, "na registreren: eerste stap van de wizard");
-ok(text().includes("Geboortedatum") && text().includes("ouder/verzorger"), "geboortedatum en jeugdbegeleiding worden helder uitgelegd");
+ok(text().includes("Geboortedatum") && !text().includes("ouder/verzorger"), "wizard toont geboortedatum zonder herhaalde begeleidingswaarschuwing");
 find(root.app, e => e.tagName === "INPUT" && e.attrs.name === "goal")[0].value = "Toertocht van 120 km";
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Volgende")[0].click();
 ok(text().includes("Vul je geldige geboortedatum in"), "wizard controleert geboortedatum voor doorgaan");
@@ -194,7 +200,8 @@ ok(text().includes("Hoeveel uur train je nu?") && text().includes("Heb je ervari
 find(root.app, e => e.tagName === "TEXTAREA")[0].value = "Ja, een beetje";
 await submit(find(root.app, e => e.tagName === "FORM")[0]);
 ok(text().includes("Toertocht van 120 km") && text().includes("Week 1") && text().includes("Rustige opbouw"), "schema getoond met week 1");
-ok(text().includes("Jeugdrenner: train met begeleiding"), "jeugdrenner krijgt een blijvende begeleidingsmelding bij het schema");
+ok(!text().includes("Jeugdrenner: train met begeleiding") && !text().includes("arts of fysiotherapeut"),
+  "schema toont geen herhaalde algemene medische of begeleidingswaarschuwing");
 ok(find(root.app, e => e.className.includes("day")).length >= 7, "zeven dagkaarten");
 ok(!find(root.app, e => e.className.includes("week-visual-day")).length &&
   !text().includes("Hoeveel uur per dag"), "oude weekbalkjes en uren-per-daggrafiek zijn verwijderd");

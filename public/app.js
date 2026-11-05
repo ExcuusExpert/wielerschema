@@ -352,8 +352,7 @@ function viewAuth(mode = "login") {
   field("Wachtwoord", password, mode === "register" ? "Minstens 10 tekens. Let op: wachtwoord vergeten kan nu nog niet hersteld worden." : null),
   mode === "register"
     ? h("div", { class: "stack" },
-        h("label", { class: "check" }, consent, h("span", {}, "Ik heb de ", h("a", { href: "privacy.html", target: "_blank", rel: "noopener" }, "privacyverklaring"), " gelezen en ga akkoord met verwerking van mijn gegevens voor deze dienst, waaronder verwerking van trainingsgegevens door de AI-coach.")),
-        h("p", { class: "hint" }, "Ben je jonger dan 18? Bespreek je schema en trainingsbelasting met je ouder/verzorger en jeugdtrainer. De coach is geen vervanging voor begeleiding."))
+    h("label", { class: "check" }, consent, h("span", {}, "Ik heb de ", h("a", { href: "privacy.html", target: "_blank", rel: "noopener" }, "privacyverklaring"), " gelezen en ga akkoord met verwerking van mijn gegevens voor deze dienst, waaronder verwerking van trainingsgegevens door de AI-coach.")))
     : null,
   error,
   submit,
@@ -387,14 +386,11 @@ function viewHome() {
       h("article", { class: "landing-card" },
         h("span", { class: "landing-number", text: "02" }),
         h("h2", { text: "Krijg een plan op maat" }),
-        h("p", { text: "De coach maakt een weekschema op basis van jouw informatie en beschikbare trainingsdagen." })),
+        h("p", { text: "De coach maakt een weekschema op basis van jouw informatie en beschikbare trainingsdagen. De intensiteit wordt weergegeven met je ingestelde hartslag- en/of vermogenszones." })),
       h("article", { class: "landing-card" },
         h("span", { class: "landing-number", text: "03" }),
         h("h2", { text: "Blijf bijsturen" }),
         h("p", { text: "Gebruik de chat om vragen te stellen en bekijk coachvoorstellen voordat je ze toepast." }))),
-    h("section", { class: "youth-notice" },
-      h("h2", { text: "Jeugdrenner?" }),
-      h("p", { text: "WielerSchema is een hulpmiddel en geen medische of professionele begeleiding. Ben je jonger dan 18, bespreek je schema en trainingsbelasting met je ouder/verzorger en een gekwalificeerde jeugdtrainer." })),
     h("section", { class: "landing-integrations" },
       h("h2", { text: "Koppelingen" }),
       h("p", { text: "Garmin- en Wahoo-koppelingen worden voorbereid. Automatische synchronisatie werkt pas zodra officiële API-toegang beschikbaar is." }))
@@ -407,7 +403,6 @@ function viewIntake(prefill) {
   renderNav("plan");
   const p = prefill || {};
   const savedProfile = state.profile || {};
-  const youthNotice = h("p", { class: "youth-inline-note", text: "Ben je jonger dan 18? Bespreek je schema en trainingsbelasting met je ouder/verzorger en jeugdtrainer." });
   const error = h("p", { class: "error", role: "alert" });
   const status = h("p", { class: "muted", role: "status" });
 
@@ -448,7 +443,6 @@ function viewIntake(prefill) {
       h("p", { class: "muted", text: "Vertel waar je naartoe wilt werken en op welk niveau je fietst." }),
       field("Wat wil je bereiken?", doel),
       field("Geboortedatum (DD-MM-JJJJ)", birthDate, "Je leeftijd helpt de coach het schema af te stemmen. Alleen je leeftijd, niet je geboortedatum, wordt met de AI gedeeld."),
-      youthNotice,
       field("Heb je een datum voor je doel?", datum, "Optioneel. Zonder datum maakt de coach een schema van ongeveer 8 weken."),
       field("Hoe zou je je niveau omschrijven?", niveau)),
     h("section", { class: "wizard-panel stack", hidden: true },
@@ -456,8 +450,7 @@ function viewIntake(prefill) {
       h("p", { class: "muted", text: "Kies alleen dagen en uren die echt in je week passen. Rust hoort ook bij trainen." }),
       field("Hoeveel uur per week kun je meestal trainen?", uren, "Dit is een bovengrens, geen doel dat je moet halen."),
       h("fieldset", { class: "days" }, h("legend", { text: "Op welke dagen kun je meestal trainen? (minimaal 2)" }),
-        ...dagenChecks.map(d => h("label", { class: "daybox" }, d.box, h("span", { text: d.naam })))),
-      h("p", { class: "youth-inline-note", text: "Voor jeugdrenners: laat een ouder/verzorger en jeugdtrainer meekijken naar de trainingsweek." })),
+        ...dagenChecks.map(d => h("label", { class: "daybox" }, d.box, h("span", { text: d.naam }))))),
     h("section", { class: "wizard-panel stack", hidden: true },
       h("h2", { text: "3. Jouw training" }),
       h("p", { class: "muted", text: "Meetapparatuur en trainingservaring helpen de coach, maar je kunt het later altijd aanpassen." }),
@@ -1223,9 +1216,6 @@ function viewPlan() {
     h("div", { class: "dashboard-heading" },
       h("p", { class: "eyebrow", text: "JOUW TRAININGSDASHBOARD" }),
       h("h1", { text: plan.intake.doel })),
-    plan.intake.leeftijd < 18 ? h("section", { class: "youth-notice" },
-      h("h2", { text: "Jeugdrenner: train met begeleiding" }),
-      h("p", { text: "Bespreek dit schema en je trainingsbelasting met je ouder/verzorger en een gekwalificeerde jeugdtrainer. De AI-coach is geen vervanging voor professionele begeleiding." })) : null,
     h("section", { class: "card stack" },
       h("p", { text: plan.summary }),
       h("p", { class: "muted", text: `${plan.total_weeks} weken, start ${dateLabel(plan.start_date)}. Je ziet steeds één week in detail; de volgende week maakt de coach nadat je hebt teruggemeld hoe het ging.` }),

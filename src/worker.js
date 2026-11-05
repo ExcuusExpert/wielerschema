@@ -118,10 +118,18 @@ async function ipHash(env, request) {
 function cleanText(v, max) {
   return typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f<>]/g, " ").replace(/\s+/g, " ").trim().slice(0, max) : "";
 }
+function withoutRpeSentences(v) {
+  if (typeof v !== "string") return v;
+  const withoutScores = v.replace(/\bRPE\s*\d+(?:\s*[-–/]\s*\d+)?(?:\s*\/\s*10)?/gi, " ");
+  const sentences = withoutScores.match(/[^.!?]+[.!?]*/g) || [withoutScores];
+  return sentences.filter(sentence => !/\bRPE\b/i.test(sentence)).join(" ")
+    .replace(/\s+([,.!?])/g, "$1").replace(/,\./g, ".").replace(/([,.!?])(?:[,.!?])+/g, "$1");
+}
+function cleanCoachText(v, max) {
+  return cleanText(withoutRpeSentences(v), max);
+}
 function cleanWorkoutText(v, max) {
-  return cleanText(typeof v === "string"
-    ? v.replace(/\bRPE\s*\d+(?:\s*[-–/]\s*\d+)?(?:\s*\/\s*10)?/gi, " ").replace(/\s+([,.])/g, "$1").replace(/,\./g, ".")
-    : v, max);
+  return cleanCoachText(v, max);
 }
 function requestedDurationMinutes(text) {
   const value = String(text || "").toLowerCase().replace(/(\d),(\d)/g, "$1.$2");
@@ -156,10 +164,7 @@ function weekLoadWarning(total, intake) {
   if (total <= limit) return "";
   const hours = (total / 60).toLocaleString("nl-NL", { maximumFractionDigits: 1 });
   const limitHours = (intake.uren_per_week * 1.05).toLocaleString("nl-NL", { maximumFractionDigits: 1 });
-  const youth = intake.leeftijd < 18
-    ? " Bespreek de extra belasting met je ouder/verzorger en jeugdtrainer."
-    : " Bouw trainingsbelasting rustig op.";
-  return `Deze week staat ${hours} uur gepland, boven je richtlijn van ${limitHours} uur.${youth}`;
+  return `Deze week staat ${hours} uur gepland; dat is meer dan je richtlijn van ${limitHours} uur.`;
 }
 function cleanNum(v, min, max) {
   if (v === "" || v === null || v === undefined) return null;
@@ -342,8 +347,11 @@ function cleanWorkoutBlocks(raw, minutes, intake) {
 function normalizeStoredWeek(week) {
   return {
     ...week,
+    uitleg: cleanCoachText(week.uitleg, 400),
+    tips: cleanCoachText(week.tips, 400),
     dagen: week.dagen.map(day => ({
       ...day,
+      titel: cleanCoachText(day.titel, 80),
       beschrijving: cleanWorkoutText(day.beschrijving, 500),
       ...(Array.isArray(day.blokken) ? { blokken: day.blokken.map(block => ({
         ...block, label: cleanWorkoutText(block.label, 50)
@@ -450,7 +458,7 @@ function cleanWeek(raw, intake, capMinutes, events = []) {
     total = workouts.reduce((s, d) => s + d.minuten, 0);
   }
   return {
-    dagen, tips: cleanText(raw.tips, 400), totaal_minuten: total,
+    dagen, tips: cleanCoachText(raw.tips, 400), totaal_minuten: total,
     weekbelasting_waarschuwing: weekLoadWarning(total, intake) || undefined
   };
 }
@@ -464,7 +472,7 @@ function cleanOutline(raw, weeks, intake) {
     out.push({
       week: i,
       fase: PHASES.includes(item.fase) ? item.fase : "opbouw",
-      focus: cleanText(item.focus, 120),
+      focus: cleanCoachText(item.focus, 120),
       uren: Math.round((uren ?? intake.uren_per_week) * 2) / 2
     });
   }
@@ -660,8 +668,13 @@ async function loadPlan(env, userId) {
   ).bind(userId).all()).results || [];
   return {
     plan: {
-      intake: normalizeStoredIntake(JSON.parse(plan.intake)), outline: JSON.parse(plan.outline), summary: plan.summary,
-      start_date: plan.start_date, total_weeks: plan.total_weeks, events
+      intake: normalizeStoredIntake(JSON.parse(plan.intake)),
+      outline: JSON.parse(plan.outline).map(item => ({ ...item, focus: cleanCoachText(item.focus, 120) })),
+      summary: cleanCoachText(plan.summary, 600),
+      start_date: plan.start_date, total_weeks: plan.total_weeks,
+      events: events.map(event => ({
+        ...event, title: cleanCoachText(event.title, 100), description: cleanCoachText(event.description, 300)
+      }))
     },
     weeks: rows.map(r => ({ week_no: r.week_no, ...normalizeStoredWeek(JSON.parse(r.detail)), checkin: r.checkin ? JSON.parse(r.checkin) : null }))
   };
@@ -743,7 +756,7 @@ async function questions(request, env, user) {
   const prompt = `${intakeBlock(c.intake)}\nStel maximaal 5 korte vervolgvragen die je echt nodig hebt om een veilig en realistisch schema te maken (bijvoorbeeld over het huidige weekvolume, ervaring met intervaltraining, drukte in werk of gezin, terrein, materiaal). Vraag niet naar wat al is ingevuld. Heb je genoeg informatie, geef dan een lege lijst. Formaat: {"vragen":[{"id":"v1","vraag":"..."}]}`;
   const r = await askValidated(env, prompt, 1500, (d) => {
     if (!Array.isArray(d.vragen)) throw new Error("geen vragen");
-    return d.vragen.slice(0, 5).map((v, i) => ({ id: `v${i + 1}`, vraag: cleanText(v?.vraag, 200) })).filter(v => v.vraag);
+    return d.vragen.slice(0, 5).map((v, i) => ({ id: `v${i + 1}`, vraag: cleanCoachText(v?.vraag, 200) })).filter(v => v.vraag);
   });
   if (!r.value) return aiError(r);
   return json({ vragen: r.value });
@@ -769,7 +782,7 @@ async function createPlan(request, env, user) {
     ` Geef: "samenvatting" (2 tot 3 korte zinnen uitleg over de opzet), "weken" (voor alle ${weeks} weken: {"week":1,"fase":"basis|opbouw|piek|afbouw|herstel","focus":"korte zin","uren":6.5}) en "week1" met de uitgewerkte eerste week. ` +
     `Formaat: {"samenvatting":"...","weken":[...],"week1":${WEEK_FORMAT}}. Dag 0 is maandag en dag 6 zondag. Geef in week1 voor elke dag een item, met type "rust" op rustdagen.`;
   const r = await askValidated(env, prompt, 5000, (d) => ({
-    summary: cleanText(d.samenvatting, 600) || "Je schema is klaar.",
+    summary: cleanCoachText(d.samenvatting, 600) || "Je schema is klaar.",
     outline: cleanOutline(d.weken, weeks, intake),
     week: cleanWeek(d.week1, intake, cap)
   }));
@@ -805,7 +818,9 @@ async function threadMessages(env, userId, weekNo, dayNo) {
     "SELECT role, content, updated, created_at FROM coach_messages WHERE user_id = ? AND week_no = ? AND day_no = ? ORDER BY created_at DESC LIMIT 20"
   ).bind(userId, weekNo, dayNo).all();
   return (result.results || []).reverse().map(message => ({
-    role: message.role, content: message.content, updated: Boolean(message.updated), created_at: message.created_at
+    role: message.role,
+    content: message.role === "assistant" ? cleanCoachText(message.content, 2000) : message.content,
+    updated: Boolean(message.updated), created_at: message.created_at
   }));
 }
 
@@ -817,7 +832,7 @@ async function recentCoachMessages(env, userId) {
     week_no: message.week_no,
     day_no: message.day_no,
     role: message.role,
-    content: message.content,
+    content: message.role === "assistant" ? cleanCoachText(message.content, 2000) : message.content,
     updated: Boolean(message.updated),
     created_at: message.created_at
   }));
@@ -838,7 +853,7 @@ async function getCoachChat(url, env, user) {
         week_no: message.week_no,
         day_no: message.day_no,
         role: message.role,
-        content: message.content,
+        content: message.role === "assistant" ? cleanCoachText(message.content, 2000) : message.content,
         updated: Boolean(message.updated),
         created_at: message.created_at,
         suggestion: message.suggestion_id ? {
@@ -948,7 +963,8 @@ async function coachChat(request, env, user) {
     (checkinDue ? `De week is afgelopen en er is nog geen terugblik. Als de gebruiker nu vertelt hoeveel hij/zij heeft getraind en hoe het voelde, geef ook "week_feedback" met {"gedaan_pct":0-100,"uren_gedaan":getal of null,"gevoel":1-5,"klachten":true/false,"opmerking":"..."}. Gebruik alleen wat de gebruiker heeft verteld; als informatie ontbreekt, stel eerst een vraag en geef "week_feedback":null. ` : "Gebruik altijd \"week_feedback\":null. ") +
     `Als er geen trainingswijziging nodig is, gebruik "voorstel":null. Antwoord uitsluitend met JSON: {"antwoord":"...","voorstel":null,"week_feedback":null${eventRequest ? ',"evenement":{"titel":"...","type":"wedstrijd|toertocht|clubrit|anders","beschrijving":"..."},"schema_aanpassing":{"samenvatting":"...","weken":[{"week":1,"fase":"basis|opbouw|piek|afbouw|herstel","focus":"...","uren":6}]}' : ""}}.`;
   const result = await askValidated(env, prompt, eventRequest ? 4000 : 1800, data => {
-    const antwoord = cleanText(data.antwoord, 800);
+    const antwoord = cleanCoachText(data.antwoord, 800) ||
+      "Ik beschrijf de intensiteit in gewone taal en gebruik alleen de zones die je hebt ingesteld.";
     if (!antwoord) throw new Error("geen antwoord");
     let voorstel = null;
     let eventProposal = null;
@@ -964,7 +980,7 @@ async function coachChat(request, env, user) {
         event_type: ["wedstrijd", "toertocht", "clubrit", "anders"].includes(event.type) ? event.type : "anders",
         event_date: eventRequest.date,
         description: cleanText(event.beschrijving, 300),
-        plan_summary: cleanText(adjustment.samenvatting, 600) || planRow.summary,
+        plan_summary: cleanCoachText(adjustment.samenvatting, 600) || planRow.summary,
         plan_outline: cleanOutline(adjustment.weken, planRow.total_weeks, intake),
         day_no: eventRequest.dayNo,
         week_no: eventRequest.weekNo
@@ -993,7 +1009,7 @@ async function coachChat(request, env, user) {
         type,
         minuten: type === "rust" ? 0 : proposalMinutes,
         zone: type === "rust" || leaveIntensityOpen ? "" : zone,
-        titel: type === "rust" ? "Rustdag" : cleanText(titel, 80),
+        titel: type === "rust" ? "Rustdag" : cleanCoachText(titel, 80),
         beschrijving: type === "rust" ? "" : leaveIntensityOpen
           ? "Intensiteit en trainingszone zijn nog open."
           : requestedMinutes !== null
@@ -1192,7 +1208,7 @@ async function checkin(request, env, user) {
   if (feedback.gevoel <= 2) cap = Math.min(cap, prevPlanned * 0.9);
   if (feedback.klachten) cap = Math.min(cap, prevPlanned * 0.5);
   const waarschuwing = feedback.klachten
-    ? "Je meldt klachten, pijn of ziekte. Neem rust en overleg met een arts of fysiotherapeut voordat je weer gaat trainen. Dit schema is geen medisch advies; de komende week is daarom extra licht."
+    ? "Je meldde klachten of ziekte; de komende week is extra licht en gericht op herstel."
     : "";
 
   const nextNo = last.week_no + 1;
@@ -1210,7 +1226,7 @@ async function checkin(request, env, user) {
     (feedback.klachten ? " De gebruiker meldt klachten: plan alleen rust en zeer rustige duurritten." : "") +
     ` Maximaal ${Math.floor(cap)} minuten in totaal. Formaat: {"uitleg":"2 korte zinnen waarom je dit zo plant","week":${WEEK_FORMAT}}.`;
   const r = await askValidated(env, prompt, 3000, (d) => ({
-    uitleg: cleanText(d.uitleg, 400),
+    uitleg: cleanCoachText(d.uitleg, 400),
     week: cleanWeek(d.week, plan.intake, cap, weekEvents)
   }));
   if (!r.value) return aiError(r);
