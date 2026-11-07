@@ -815,6 +815,23 @@ test("schema maken: vangrails op dagen, minuten en tekst", async () => {
   assert.equal(again.data.weeks.length, 1);
 });
 
+test("schema bevat ook een doel op de eerste dag van een nieuwe week", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env, "weekgrens");
+  const todayDate = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Amsterdam" });
+  const target = new Date(`${todayDate}T00:00:00Z`);
+  const day = target.getUTCDay();
+  target.setUTCDate(target.getUTCDate() + ((8 - day) % 7 || 7) + 14);
+  const targetDate = target.toISOString().slice(0, 10);
+  const created = await api(env, "POST", "/api/plan/create", {
+    intake: { ...INTAKE, datum: targetDate },
+    answers: []
+  }, { cookie });
+  assert.equal(created.status, 200);
+  assert.equal(created.data.plan.total_weeks, 3);
+  assert.equal(created.data.plan.outline.length, 3);
+});
+
 test("AI geeft rommel: geen schema opgeslagen en nette foutmelding", async () => {
   const env = makeEnv();
   const cookie = await signup(env);

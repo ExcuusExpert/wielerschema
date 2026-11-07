@@ -405,7 +405,7 @@ function cleanAnswers(raw) {
 
 function planWeeks(intake, start) {
   if (!intake.datum) return 8;
-  return Math.min(16, Math.max(2, Math.ceil(daysBetween(start, intake.datum) / 7)));
+  return Math.min(16, Math.max(2, Math.floor(daysBetween(start, intake.datum) / 7) + 1));
 }
 
 // Maakt van het AI-antwoord een veilige, vaste week. Dit is de belangrijkste vangrail.
