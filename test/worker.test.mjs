@@ -333,6 +333,9 @@ test("AI-coach verwijdert RPE-zinnen uit zichtbare antwoorden", async () => {
   const env = makeEnv();
   const cookie = await signup(env);
   await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  assert.match(lastGroqSystemPrompt, /gebruik je en jij/i);
+  assert.match(lastGroqSystemPrompt, /demarreren/i);
+  assert.match(lastGroqSystemPrompt, /laatste ronde/i);
   coachMode = "rpe";
   const reply = await api(env, "POST", "/api/coach/chat", {
     week_no: 1, day_no: 0, bericht: "Hoe intensief is het?", global: true
