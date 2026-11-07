@@ -13,7 +13,7 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 - Intake: doel, datum, niveau, uren per week, beschikbare dagen, ervaring en beperkingen. Een geboortedatum is verplicht; alleen de berekende leeftijd gaat naar Groq.
 - Keuze uit vermogensmeter, hartslagmeter, beide of geen van beide. Vijf hartslagzones worden berekend uit je maximale hartslag. Voor vermogen vul je je FTP in en kies je vijf of zeven zones; de standaardgrenzen volgen FTP-percentages en kunnen worden aangepast.
 - Trainingsintensiteit wordt weergegeven met de ingestelde hartslag- en/of vermogenszones.
-- Activiteitenpagina's voor Garmin en Wahoo zijn voorbereid, maar beide koppelingen wachten op officiële API-toegang. Er worden nog geen externe activiteiten gesynchroniseerd.
+- Intervals.icu kan via OAuth worden gekoppeld. De app haalt recente activiteiten en wellnessgegevens op, waaronder slaap, HRV en rusthartslag, en geeft die als context aan de coach. Garmin en Wahoo zijn alleen voorbereid.
 - AI stelt maximaal 5 vervolgvragen in een chatweergave, maakt een overzicht van alle weken en werkt week 1 uit.
 - Eén doorlopende, WhatsApp-achtige chat met de coach; de coach krijgt de datum en de training van vandaag uit je actuele schema mee, zonder dat je week of dag hoeft te kiezen.
 - Pas trainingsdagen ook zelf aan: trainingstype, duur, zone, titel, beschrijving en optionele intervalblokken. Handmatige wijzigingen worden direct opgeslagen; de beschikbare zones, weeklimiet en gezondheidswaarschuwingen blijven gelden.
@@ -27,7 +27,7 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 - Onder Account kun je je geboortedatum, meetapparatuur en trainingszones aanpassen, je gebruikersnaam of wachtwoord wijzigen, je gegevens downloaden en je account verwijderen.
 - Privacyverklaring.
 
-Nog niet: wachtwoord vergeten (er is geen e-mail), automatische koppelingen met Garmin, Strava of Wahoo. De Garmin- en Wahoo-pagina's zijn alleen voorbereidingen; er is nog geen login of synchronisatie.
+Nog niet: wachtwoord vergeten (er is geen e-mail), automatische koppelingen met Garmin, Strava of Wahoo. Intervals.icu vereist OAuth-secrets en een goedgekeurde app.
 
 ## Veiligheid en vangrails
 
@@ -52,6 +52,20 @@ De code bevat worker-tests en een rooktest die de website tegen de worker draait
 2. Cloudflare, Workers & Pages, Create, **Import a repository**, kies de repo. Laat het buildcommando leeg; het deploy-commando is `npx wrangler deploy`.
 3. Na de eerste deploy: Settings, Variables and Secrets, voeg het secret **`GROQ_API_KEY`** toe (dezelfde sleutel als bij ExcuusExpert mag).
 4. Open het adres van de worker (eindigt op `.workers.dev`).
+
+### Intervals.icu OAuth
+Maak eerst een goedgekeurde OAuth-app aan via Intervals.icu en gebruik als redirect-URL:
+`https://<jouw-worker>.workers.dev/api/intervals/callback`.
+Stel daarna deze secrets in:
+
+```
+npx wrangler secret put INTERVALS_CLIENT_ID
+npx wrangler secret put INTERVALS_CLIENT_SECRET
+npx wrangler secret put INTERVALS_REDIRECT_URI
+npx wrangler secret put INTERVALS_TOKEN_KEY
+```
+
+`INTERVALS_TOKEN_KEY` moet 32 willekeurige bytes als 64 hex-tekens bevatten. De app vraagt alleen `ACTIVITY:READ` en `WELLNESS:READ`, haalt de laatste 30 dagen op en gebruikt recente activiteiten en slaap-/herstelgegevens als context voor de coach.
 
 ### Route B: met wrangler op je computer (Node.js nodig)
 ```

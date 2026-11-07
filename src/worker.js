@@ -3,6 +3,8 @@
 // Secrets (instellen in Cloudflare, NOOIT in de code):
 //   GROQ_API_KEY  = jouw Groq-sleutel
 //   HASH_SALT     = (optioneel) willekeurige tekst voor het versleutelen van IP-adressen
+//   INTERVALS_CLIENT_ID, INTERVALS_CLIENT_SECRET, INTERVALS_REDIRECT_URI
+//   INTERVALS_TOKEN_KEY = 64 hex-tekens voor versleuteling van OAuth-tokens
 // Bindings: DB (D1-database), ASSETS (de map public/, zie wrangler.toml)
 
 const SESSION_DAYS = 30;
@@ -50,7 +52,21 @@ const SCHEMA = [
      day_no INTEGER NOT NULL, workout TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS counters (
      key TEXT PRIMARY KEY, n INTEGER NOT NULL, day TEXT NOT NULL)`,
-  `CREATE INDEX IF NOT EXISTS idx_counters_day ON counters(day)`
+  `CREATE INDEX IF NOT EXISTS idx_counters_day ON counters(day)`,
+  `CREATE TABLE IF NOT EXISTS intervals_connections (
+     user_id TEXT PRIMARY KEY, athlete_id TEXT NOT NULL, athlete_name TEXT NOT NULL,
+     access_token TEXT NOT NULL, refresh_token TEXT, expires_at INTEGER,
+     scope TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS intervals_activities (
+     user_id TEXT NOT NULL, activity_id TEXT NOT NULL, activity_date TEXT NOT NULL,
+     data TEXT NOT NULL, updated_at INTEGER NOT NULL,
+     PRIMARY KEY (user_id, activity_id))`,
+  `CREATE INDEX IF NOT EXISTS idx_intervals_activities_user_date ON intervals_activities(user_id, activity_date)`,
+  `CREATE TABLE IF NOT EXISTS intervals_wellness (
+     user_id TEXT NOT NULL, wellness_date TEXT NOT NULL, data TEXT NOT NULL,
+     updated_at INTEGER NOT NULL, PRIMARY KEY (user_id, wellness_date))`,
+  `CREATE TABLE IF NOT EXISTS intervals_oauth_states (
+     state TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at INTEGER NOT NULL)`
 ];
 
 const SYSTEM_COACH =
@@ -58,6 +74,7 @@ const SYSTEM_COACH =
   "Praat op gelijke hoogte met de gebruiker: gebruik je en jij, geen formele woorden of preken. Houd antwoorden kort en scanbaar voor een jonge fietser: korte alinea's, bullets waar dat helpt en duidelijke opdrachten. " +
   "Gebruik af en toe herkenbare wielertermen zoals demarreren, stoempen, het elastiek, het snot voor de ogen, lead-out en kopwerk als die natuurlijk passen bij de training of vraag; overdrijf dit niet en leg onbekende termen kort uit. " +
   "Leg bij een training kort en functioneel uit waarom die nuttig is voor het doel, gekoppeld aan een wedstrijdsituatie, bijvoorbeeld zodat de gebruiker in de laatste ronde nog kan versnellen, een gat kan dichtrijden of het kopwerk kan volhouden. " +
+  "Als er een <intervals-icu>-blok staat, gebruik recente activiteiten en herstel- of slaapgegevens alleen als context. Benoem slaap of herstel alleen als dat relevant is, verzin geen ontbrekende waarden en maak geen medische diagnose. " +
   "Een schema is geen medisch advies; bij pijn, blessures, ziekte of ongewone klachten adviseer je rust en een arts of fysiotherapeut. " +
   "Bouw rustig op: verhoog het weekvolume met hooguit ongeveer 10 procent per week en plan elke derde of vierde week een herstelweek. " +
   "Hou je voor de gewone trainingsopbouw aan de beschikbare dagen en het maximale aantal uren per week. Een concrete clubrit of wedstrijd mag worden toegevoegd; als de weekrichtlijn daardoor wordt overschreden, toon een korte waarschuwing maar blokkeer de gevraagde activiteit niet. " +
@@ -102,6 +119,24 @@ const toHex = (buf) => [...new Uint8Array(buf)].map(b => b.toString(16).padStart
 const fromHex = (hex) => Uint8Array.from(hex.match(/../g).map(h => parseInt(h, 16)));
 async function sha256Hex(text) { return toHex(await crypto.subtle.digest("SHA-256", enc.encode(text))); }
 function randomHex(bytes) { return toHex(crypto.getRandomValues(new Uint8Array(bytes))); }
+function intervalsConfigured(env) {
+  return Boolean(env.INTERVALS_CLIENT_ID && env.INTERVALS_CLIENT_SECRET && env.INTERVALS_REDIRECT_URI && env.INTERVALS_TOKEN_KEY);
+}
+async function tokenKey(env) {
+  if (!/^[0-9a-f]{64}$/i.test(env.INTERVALS_TOKEN_KEY || "")) throw new Error("Intervals-tokenkey ontbreekt of is ongeldig");
+  return crypto.subtle.importKey("raw", fromHex(env.INTERVALS_TOKEN_KEY), "AES-GCM", false, ["encrypt", "decrypt"]);
+}
+async function encryptToken(env, value) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await tokenKey(env), enc.encode(value));
+  return `${toHex(iv)}.${toHex(encrypted)}`;
+}
+async function decryptToken(env, value) {
+  const [ivHex, dataHex] = String(value || "").split(".");
+  if (!/^[0-9a-f]{24}$/i.test(ivHex) || !dataHex) throw new Error("ongeldig Intervals-token");
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromHex(ivHex) }, await tokenKey(env), fromHex(dataHex));
+  return new TextDecoder().decode(plain);
+}
 async function safeEqual(a, b) {
   const [x, y] = await Promise.all([sha256Hex(String(a)), sha256Hex(String(b))]);
   let diff = 0;
@@ -581,6 +616,7 @@ async function handleApi(request, env, url) {
 
   if (path === "/api/register" && method === "POST") return register(request, env);
   if (path === "/api/login" && method === "POST") return login(request, env);
+  if (path === "/api/intervals/callback" && method === "GET") return intervalsCallback(request, env);
 
   const user = await currentUser(env, request);
   if (path === "/api/logout" && method === "POST") {
@@ -591,6 +627,10 @@ async function handleApi(request, env, url) {
   if (!user) return json({ error: "unauthorized" }, 401);
 
   if (path === "/api/me" && method === "GET") return json({ username: user.username });
+  if (path === "/api/intervals/status" && method === "GET") return intervalsStatus(env, user);
+  if (path === "/api/intervals/connect" && method === "GET") return intervalsConnect(env, user, request);
+  if (path === "/api/intervals/sync" && method === "POST") return intervalsSync(request, env, user);
+  if (path === "/api/intervals/disconnect" && method === "POST") return intervalsDisconnect(env, user);
   if (path === "/api/account/profile" && method === "GET") return getAccountProfile(env, user);
   if (path === "/api/account/profile" && method === "POST") return saveAccountProfile(request, env, user);
   if (path === "/api/account/credentials" && method === "POST") return updateCredentials(request, env, user);
@@ -685,6 +725,199 @@ async function loadPlan(env, userId) {
 async function getPlan(env, user) {
   const data = await loadPlan(env, user.id);
   return json(data || { plan: null, weeks: [] });
+}
+
+async function intervalsConnection(env, userId) {
+  const row = await env.DB.prepare(
+    "SELECT athlete_id, athlete_name, scope, updated_at FROM intervals_connections WHERE user_id = ?"
+  ).bind(userId).first();
+  return row || null;
+}
+
+async function intervalsStatus(env, user) {
+  if (!intervalsConfigured(env)) return json({ configured: false, connected: false });
+  const connection = await intervalsConnection(env, user.id);
+  const counts = connection ? await Promise.all([
+    env.DB.prepare("SELECT COUNT(*) AS n FROM intervals_activities WHERE user_id = ?").bind(user.id).first(),
+    env.DB.prepare("SELECT COUNT(*) AS n FROM intervals_wellness WHERE user_id = ?").bind(user.id).first()
+  ]) : [{ n: 0 }, { n: 0 }];
+  return json({
+    configured: true,
+    connected: Boolean(connection),
+    athlete_name: connection?.athlete_name || null,
+    activities: Number(counts[0]?.n || 0),
+    wellness: Number(counts[1]?.n || 0),
+    updated_at: connection?.updated_at || null
+  });
+}
+
+async function intervalsConnect(env, user, request) {
+  if (!intervalsConfigured(env)) return json({ error: "not_configured", message: "Intervals.icu is nog niet geconfigureerd." }, 503);
+  const state = randomHex(24);
+  await env.DB.prepare("INSERT INTO intervals_oauth_states (state, user_id, expires_at) VALUES (?, ?, ?)")
+    .bind(state, user.id, Date.now() + 10 * 60 * 1000).run();
+  const url = new URL("https://intervals.icu/oauth/authorize");
+  url.searchParams.set("client_id", env.INTERVALS_CLIENT_ID);
+  url.searchParams.set("redirect_uri", env.INTERVALS_REDIRECT_URI);
+  url.searchParams.set("scope", "ACTIVITY:READ,WELLNESS:READ");
+  url.searchParams.set("state", state);
+  return Response.redirect(url.toString(), 302);
+}
+
+async function intervalsCallback(request, env) {
+  const url = new URL(request.url);
+  const state = url.searchParams.get("state") || "";
+  const code = url.searchParams.get("code") || "";
+  const failure = url.searchParams.get("error");
+  const row = await env.DB.prepare(
+    "SELECT user_id FROM intervals_oauth_states WHERE state = ? AND expires_at > ?"
+  ).bind(state, Date.now()).first();
+  await env.DB.prepare("DELETE FROM intervals_oauth_states WHERE state = ?").bind(state).run();
+  const redirect = new URL("/", url.origin);
+  redirect.searchParams.set("intervals", failure ? "denied" : row && code ? "connected" : "error");
+  if (!row || !code || failure) return Response.redirect(redirect.toString(), 302);
+
+  const tokenResponse = await fetch("https://intervals.icu/api/oauth/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: env.INTERVALS_CLIENT_ID,
+      client_secret: env.INTERVALS_CLIENT_SECRET,
+      code
+    })
+  });
+  const token = await tokenResponse.json().catch(() => ({}));
+  if (!tokenResponse.ok || !token.access_token || !token.athlete_id) {
+    redirect.searchParams.set("intervals", "error");
+    return Response.redirect(redirect.toString(), 302);
+  }
+  const now = Date.now();
+  await env.DB.prepare(
+    `INSERT INTO intervals_connections
+      (user_id, athlete_id, athlete_name, access_token, refresh_token, expires_at, scope, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET athlete_id=excluded.athlete_id,
+       athlete_name=excluded.athlete_name, access_token=excluded.access_token,
+       refresh_token=excluded.refresh_token, expires_at=excluded.expires_at,
+       scope=excluded.scope, updated_at=excluded.updated_at`
+  ).bind(
+    row.user_id, String(token.athlete_id), cleanText(token.athlete_name || "", 120),
+    await encryptToken(env, token.access_token),
+    token.refresh_token ? await encryptToken(env, token.refresh_token) : null,
+    token.expires_in ? now + Number(token.expires_in) * 1000 : null,
+    cleanText(token.scope || "ACTIVITY:READ,WELLNESS:READ", 300), now
+  ).run();
+  try { await syncIntervals(env, row.user_id); }
+  catch (e) { log("intervals_initial_sync_error", { msg: String(e.message).slice(0, 160) }); }
+  return Response.redirect(redirect.toString(), 302);
+}
+
+async function refreshIntervalsToken(env, connection) {
+  if (!connection.refresh_token || !connection.expires_at || connection.expires_at > Date.now() + 60_000) {
+    return connection;
+  }
+  const refreshToken = await decryptToken(env, connection.refresh_token);
+  const response = await fetch("https://intervals.icu/api/oauth/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: env.INTERVALS_CLIENT_ID,
+      client_secret: env.INTERVALS_CLIENT_SECRET,
+      grant_type: "refresh_token",
+      refresh_token: refreshToken
+    })
+  });
+  const token = await response.json().catch(() => ({}));
+  if (!response.ok || !token.access_token) throw new Error("Intervals-token vernieuwen mislukt");
+  const updated = {
+    ...connection,
+    access_token: await encryptToken(env, token.access_token),
+    refresh_token: token.refresh_token ? await encryptToken(env, token.refresh_token) : connection.refresh_token,
+    expires_at: token.expires_in ? Date.now() + Number(token.expires_in) * 1000 : null
+  };
+  await env.DB.prepare(
+    "UPDATE intervals_connections SET access_token = ?, refresh_token = ?, expires_at = ?, updated_at = ? WHERE user_id = ?"
+  ).bind(updated.access_token, updated.refresh_token, updated.expires_at, Date.now(), connection.user_id).run();
+  return updated;
+}
+
+async function intervalsApi(env, connection, path) {
+  const activeConnection = await refreshIntervalsToken(env, connection);
+  const accessToken = await decryptToken(env, activeConnection.access_token);
+  const response = await fetch(`https://intervals.icu/api/v1/athlete/${encodeURIComponent(connection.athlete_id)}${path}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }
+  });
+  if (!response.ok) throw new Error(`Intervals.icu gaf status ${response.status}`);
+  return response.json();
+}
+
+async function syncIntervals(env, userId) {
+  const connection = await env.DB.prepare("SELECT * FROM intervals_connections WHERE user_id = ?").bind(userId).first();
+  if (!connection) return { activities: 0, wellness: 0 };
+  const newest = today();
+  const oldest = addDays(newest, -30);
+  const [activities, wellness] = await Promise.all([
+    intervalsApi(env, connection, `/activities?oldest=${oldest}&newest=${newest}`),
+    intervalsApi(env, connection, `/wellness?oldest=${oldest}&newest=${newest}`)
+  ]);
+  const now = Date.now();
+  const activityRows = Array.isArray(activities) ? activities.filter(item => item?.id && item?.start_date_local) : [];
+  const wellnessRows = Array.isArray(wellness) ? wellness.filter(item => item?.id || item?.date) : [];
+  await env.DB.batch([
+    ...activityRows.map(item => env.DB.prepare(
+      `INSERT INTO intervals_activities (user_id, activity_id, activity_date, data, updated_at)
+       VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, activity_id) DO UPDATE SET
+       activity_date=excluded.activity_date, data=excluded.data, updated_at=excluded.updated_at`
+    ).bind(userId, String(item.id), String(item.start_date_local).slice(0, 10), JSON.stringify(item), now)),
+    ...wellnessRows.map(item => {
+      const date = String(item.date || item.id).slice(0, 10);
+      return env.DB.prepare(
+        `INSERT INTO intervals_wellness (user_id, wellness_date, data, updated_at)
+         VALUES (?, ?, ?, ?) ON CONFLICT(user_id, wellness_date) DO UPDATE SET
+         data=excluded.data, updated_at=excluded.updated_at`
+      ).bind(userId, date, JSON.stringify(item), now);
+    })
+  ]);
+  await env.DB.prepare("UPDATE intervals_connections SET updated_at = ? WHERE user_id = ?").bind(now, userId).run();
+  return { activities: activityRows.length, wellness: wellnessRows.length };
+}
+
+async function intervalsSync(request, env, user) {
+  try {
+    return json({ ok: true, ...(await syncIntervals(env, user.id)) });
+  } catch (e) {
+    log("intervals_sync_error", { msg: String(e.message).slice(0, 160) });
+    return json({ error: "sync_failed", message: "De Intervals.icu-gegevens konden niet worden opgehaald." }, 502);
+  }
+}
+
+async function intervalsDisconnect(env, user) {
+  const connection = await env.DB.prepare("SELECT access_token FROM intervals_connections WHERE user_id = ?").bind(user.id).first();
+  if (connection) {
+    try {
+      const token = await decryptToken(env, connection.access_token);
+      await fetch("https://intervals.icu/api/v1/disconnect-app", {
+        method: "DELETE", headers: { Authorization: `Bearer ${token}` }
+      });
+    } catch (e) { log("intervals_disconnect_error", { msg: String(e.message).slice(0, 160) }); }
+  }
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM intervals_connections WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM intervals_activities WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM intervals_wellness WHERE user_id = ?").bind(user.id)
+  ]);
+  return json({ ok: true });
+}
+
+async function intervalsContext(env, userId) {
+  const [activities, wellness] = await Promise.all([
+    env.DB.prepare("SELECT activity_date, data FROM intervals_activities WHERE user_id = ? ORDER BY activity_date DESC LIMIT 10").bind(userId).all(),
+    env.DB.prepare("SELECT wellness_date, data FROM intervals_wellness WHERE user_id = ? ORDER BY wellness_date DESC LIMIT 14").bind(userId).all()
+  ]);
+  return {
+    recente_activiteiten: (activities.results || []).map(row => JSON.parse(row.data)),
+    herstel_en_slaap: (wellness.results || []).map(row => JSON.parse(row.data))
+  };
 }
 
 async function updateWorkout(request, env, user) {
@@ -946,6 +1179,7 @@ async function coachChat(request, env, user) {
   const prompt = `<coachgesprek>${JSON.stringify(transcript)}</coachgesprek>\n` +
     (continuous ? "Dit is een doorlopend gesprek. Eerdere berichten kunnen over een andere week of training gaan. Voor vragen over vandaag is de expliciete datum en training hieronder leidend; vraag de gebruiker niet welke dag het is. Als de training van vandaag rust is, zeg dat duidelijk. Gebruik het volledige weekschema om verzoeken over een andere weekdag te begrijpen; de week- en dagnummers zijn alleen interne context.\n" : "") +
     `<gebruiker>${JSON.stringify(intake)}</gebruiker>\n` +
+    `<intervals-icu>${JSON.stringify(await intervalsContext(env, user.id))}</intervals-icu>\n` +
     (continuous ? `Vandaag is ${today()} (${DAG_NAMEN[dayNo]}, dag ${dayNo}) in de tijdzone Europe/Amsterdam. ${scheduleState}\nTraining die vandaag volgens het schema gepland staat: ${JSON.stringify(todayWorkout)}.\n` : "") +
     (eventIntent && !eventRequest
       ? requestedDate
@@ -1346,6 +1580,7 @@ async function exportAccount(env, user) {
   const coachMessages = (await env.DB.prepare(
     "SELECT week_no, day_no, role, content, updated, created_at FROM coach_messages WHERE user_id = ? ORDER BY created_at"
   ).bind(user.id).all()).results || [];
+  const intervals = await intervalsContext(env, user.id);
   return json({
     gebruikersnaam: user.username,
     profiel: profile,
@@ -1353,6 +1588,7 @@ async function exportAccount(env, user) {
     toestemming_gegeven: new Date(row.consent_at).toISOString(),
     antwoorden_op_vragen: plan ? JSON.parse(plan.answers) : [],
     coachgesprekken: coachMessages,
+    intervals_icu: intervals,
     schema: data
   }, 200, { "Content-Disposition": 'attachment; filename="wielerschema-gegevens.json"' });
 }
@@ -1368,6 +1604,10 @@ async function deleteAccount(request, env, user) {
     env.DB.prepare("DELETE FROM plans WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM coach_suggestions WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM coach_messages WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM intervals_connections WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM intervals_activities WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM intervals_wellness WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM intervals_oauth_states WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM account_profiles WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id)

@@ -594,6 +594,42 @@ function viewActivities() {
 function viewConnections() {
   state.page = "connections";
   renderNav("connections");
+  const status = h("p", { class: "integration-status", role: "status", text: "Status laden…" });
+  const connect = h("button", { class: "btn", type: "button", text: "Koppel Intervals.icu" });
+  const sync = h("button", { class: "btn ghost", type: "button", text: "Gegevens nu ophalen", hidden: true });
+  const disconnect = h("button", { class: "btn ghost", type: "button", text: "Koppeling verbreken", hidden: true });
+  const details = h("p", { class: "hint" });
+  const refresh = async () => {
+    try {
+      const data = await api("GET", "/api/intervals/status");
+      if (!data.configured) {
+        status.textContent = "Intervals.icu is nog niet geconfigureerd.";
+        details.textContent = "De beheerder moet eerst OAuth-instellingen toevoegen.";
+        connect.disabled = true;
+        return;
+      }
+      if (!data.connected) {
+        status.textContent = "Nog niet gekoppeld.";
+        details.textContent = "Koppel je account om activiteiten en herstel- en slaapgegevens te gebruiken.";
+        connect.hidden = false; sync.hidden = true; disconnect.hidden = true;
+        return;
+      }
+      status.textContent = `Verbonden met ${data.athlete_name || "Intervals.icu"}.`;
+      details.textContent = `${data.activities} activiteiten en ${data.wellness} herstel-/slaapmetingen opgeslagen.`;
+      connect.hidden = true; sync.hidden = false; disconnect.hidden = false;
+    } catch (e) { status.textContent = e.message; }
+  };
+  connect.onclick = () => { window.location.href = "/api/intervals/connect"; };
+  sync.onclick = async () => {
+    sync.disabled = true; status.textContent = "Gegevens ophalen…";
+    try { await api("POST", "/api/intervals/sync", {}); await refresh(); }
+    catch (e) { status.textContent = e.message; sync.disabled = false; }
+  };
+  disconnect.onclick = async () => {
+    disconnect.disabled = true;
+    try { await api("POST", "/api/intervals/disconnect", {}); await refresh(); }
+    catch (e) { status.textContent = e.message; disconnect.disabled = false; }
+  };
   show(
     h("div", { class: "page-heading" },
       h("p", { class: "eyebrow", text: "ACTIVITEITEN AUTOMATISEREN" }),
@@ -617,6 +653,12 @@ function viewConnections() {
       h("p", { class: "hint", text: "Er wordt nog geen Garmin-login gevraagd en er worden geen gegevens gesynchroniseerd." })),
     h("section", { class: "card garmin-card stack" },
       h("div", { class: "garmin-heading" },
+        h("span", { class: "wahoo-mark", "aria-hidden": "true", text: "I" }),
+        h("div", {}, h("p", { class: "eyebrow", text: "INTERVALS.ICU" }), h("h2", { text: "Activiteiten en herstel" }))),
+      h("p", { text: "Haal je recente ritten en herstelgegevens op. De coach kan slaap, HRV en rusthartslag als trainingscontext gebruiken." }),
+      status, details, h("div", { class: "row" }, connect, sync, disconnect))
+    , h("section", { class: "card garmin-card stack" },
+      h("div", { class: "garmin-heading" },
         h("span", { class: "wahoo-mark", "aria-hidden": "true", text: "W" }),
         h("div", {},
           h("p", { class: "eyebrow", text: "WAHOO" }),
@@ -628,6 +670,7 @@ function viewConnections() {
       h("button", { class: "btn", type: "button", disabled: true, text: "Wahoo binnenkort koppelen" }),
       h("p", { class: "hint", text: "Er wordt nog geen Wahoo-login gevraagd en er worden geen gegevens gesynchroniseerd." }))
   );
+  refresh();
 }
 
 function viewQuestions(intake, vragen) {
