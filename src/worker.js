@@ -1136,6 +1136,25 @@ async function intervalsContext(env, userId) {
   };
 }
 
+async function recentActivityContext(env, userId) {
+  const rows = (await env.DB.prepare(
+    "SELECT activity_date, data FROM intervals_activities WHERE user_id = ? ORDER BY activity_date DESC, updated_at DESC LIMIT 10"
+  ).bind(userId).all()).results || [];
+  return rows.map(row => {
+    const activity = JSON.parse(row.data);
+    return {
+      naam: activity.name || "Training",
+      datum: activity.start_date_local || row.activity_date,
+      bron: activity.source || "fit",
+      duur_minuten: activity.elapsed_time ? Math.round(activity.elapsed_time / 60) : null,
+      afstand_km: activity.distance != null ? Number((activity.distance / 1000).toFixed(1)) : null,
+      gemiddelde_hartslag: activity.average_heartrate ?? null,
+      gemiddeld_vermogen: activity.average_watts ?? null,
+      hoogtemeters: activity.total_elevation_gain ?? null
+    };
+  });
+}
+
 async function updateWorkout(request, env, user) {
   const body = await readJson(request);
   const weekNo = Number(body.week_no);
@@ -1429,6 +1448,7 @@ async function coachChat(request, env, user) {
     (continuous ? "Dit is een doorlopend gesprek. Eerdere berichten kunnen over een andere week of training gaan. Voor vragen over vandaag is de expliciete datum en training hieronder leidend; vraag de gebruiker niet welke dag het is. Als de training van vandaag rust is, zeg dat duidelijk. Gebruik het volledige weekschema om verzoeken over een andere weekdag te begrijpen; de week- en dagnummers zijn alleen interne context.\n" : "") +
     `<gebruiker>${JSON.stringify(intake)}</gebruiker>\n` +
     `<intervals-icu>${JSON.stringify(await intervalsContext(env, user.id))}</intervals-icu>\n` +
+    `<recente-fietstrainingen>${JSON.stringify(await recentActivityContext(env, user.id))}</recente-fietstrainingen>\n` +
     (continuous ? `Vandaag is ${today()} (${DAG_NAMEN[dayNo]}, dag ${dayNo}) in de tijdzone Europe/Amsterdam. ${scheduleState}\nTraining die vandaag volgens het schema gepland staat: ${JSON.stringify(todayWorkout)}.\n` : "") +
     (eventIntent && !eventRequest
       ? requestedDate
@@ -1442,7 +1462,7 @@ async function coachChat(request, env, user) {
     (week.waarschuwing ? `Vaste gezondheidswaarschuwing: ${week.waarschuwing}\n` : "") +
     `Nieuw bericht van de gebruiker: <bericht>${JSON.stringify(message)}</bericht>\n` +
     (eventRequest ? `<schema-overzicht>${planRow.outline}</schema-overzicht>\nDe gebruiker noemt een concrete toekomstige wedstrijd of ander evenement op ${eventRequest.date} (week ${eventRequest.weekNo}, dag ${DAG_NAMEN[eventRequest.dayNo]}). Maak verplicht "evenement" met titel, type en beschrijving, plus "schema_aanpassing" met een nieuwe volledige samenvatting en alle weken van het overzicht. Werk de opbouw toe naar dit evenement en plan herstel erna. Deze aanpassing is alleen een voorstel en wordt pas na akkoord opgeslagen. ` : "") +
-    `Beantwoord de gebruiker kort en vriendelijk in het Nederlands. Als iemand vraagt wat hij/zij vandaag moet doen, noem de training van vandaag uit de expliciete context hierboven met type, duur, titel, zone en intervallen. Vraag nooit welke dag het is. Als de training hierboven null is, zeg dat er vandaag geen training is ingepland en noem waarom volgens de schema-status; presenteer de laatste beschikbare week niet als training van vandaag. Als iemand om een wijziging vraagt, geef "voorstel" met {"dag":0-6,"type":"${TYPES.join("|")}","minuten":duur_in_minuten,"zone":"Z2 of leeg","titel":"...","beschrijving":"...","blokken":[{"minuten":10,"zone":"Z1","label":"warming-up"}]}. Dag 0 is maandag en dag 5 zaterdag. Zet een specifieke genoemde weekdag altijd in "dag"; neem de titel en aard van de rit letterlijk over. Bij een MTB-rit gebruik type "mtb". Behoud een expliciet door de gebruiker genoemde duur exact; verkort die nooit zelf om binnen de weekrichtlijn te passen. Als de richtlijn wordt overschreden, maak een voorstel en toon een korte waarschuwing; blokkeer de training niet. Als duur niet bekend is, behoud de duur van de training die op die dag staat; anders gebruik een redelijke duur. Als je een training wijzigt die intervalblokken heeft, geef die blokken volledig terug en laat de minuten optellen tot de totale duur. Als de gebruiker zones of intensiteit leeg/open wil laten, geef "zone":"" en laat wattages, hartslagdoelen, zones en intensiteitsinstructies uit de beschrijving en blokken. Bij een rustdag gebruik type "rust". ` +
+    `Beantwoord de gebruiker kort en vriendelijk in het Nederlands. Gebruik <recente-fietstrainingen> als echte trainingsgeschiedenis: als de gebruiker vraagt wat hij/zij heeft gefietst, benoem alleen ritten en waarden die daar staan. Doe niet alsof een rit onbekend is als die in deze lijst staat. Als iemand vraagt wat hij/zij vandaag moet doen, noem de training van vandaag uit de expliciete context hierboven met type, duur, titel, zone en intervallen. Vraag nooit welke dag het is. Als de training hierboven null is, zeg dat er vandaag geen training is ingepland en noem waarom volgens de schema-status; presenteer de laatste beschikbare week niet als training van vandaag. Als iemand om een wijziging vraagt, geef "voorstel" met {"dag":0-6,"type":"${TYPES.join("|")}","minuten":duur_in_minuten,"zone":"Z2 of leeg","titel":"...","beschrijving":"...","blokken":[{"minuten":10,"zone":"Z1","label":"warming-up"}]}. Dag 0 is maandag en dag 5 zaterdag. Zet een specifieke genoemde weekdag altijd in "dag"; neem de titel en aard van de rit letterlijk over. Bij een MTB-rit gebruik type "mtb". Behoud een expliciet door de gebruiker genoemde duur exact; verkort die nooit zelf om binnen de weekrichtlijn te passen. Als de richtlijn wordt overschreden, maak een voorstel en toon een korte waarschuwing; blokkeer de training niet. Als duur niet bekend is, behoud de duur van de training die op die dag staat; anders gebruik een redelijke duur. Als je een training wijzigt die intervalblokken heeft, geef die blokken volledig terug en laat de minuten optellen tot de totale duur. Als de gebruiker zones of intensiteit leeg/open wil laten, geef "zone":"" en laat wattages, hartslagdoelen, zones en intensiteitsinstructies uit de beschrijving en blokken. Bij een rustdag gebruik type "rust". ` +
     `Als de gebruiker alleen vrijblijvend vraagt wat een alternatief zou zijn, kan je een voorstel tonen maar dit niet meteen toepassen. Een duidelijke opdracht om iets in het schema te zetten of te wijzigen wordt automatisch verwerkt door de server na validatie. Overschrijding van de weekrichtlijn geeft een waarschuwing, geen blokkade. ` +
     `Bij een gezondheidswaarschuwing mag je alleen rust of zeer rustige duurrit/herstelrit in Z1 of Z2 voorstellen. ` +
     `Gebruik de gekozen meter: ${intake.meter}; hartslag- en vermogenszones alleen als ze bekend zijn, verzin geen bpm, FTP of zones. ` +

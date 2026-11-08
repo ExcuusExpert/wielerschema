@@ -684,9 +684,39 @@ function viewActivities() {
         toggleDetails.textContent = detailsOpen ? "Verberg details" : "Bekijk details";
       }});
       details.setAttribute("hidden", "");
+      const nameHeading = h("h2", { text: activity.name || "Training" });
       const heading = h("div", { class: "activity-item-heading" },
-        h("h2", { text: activity.name || "Training" }),
+        nameHeading,
         h("time", { class: "muted", datetime: activity.start_date_local || activity.date, text: activityDateLabel(activity.start_date_local || activity.date) }));
+      const editName = h("input", { class: "activity-name-input", type: "text", maxlength: 100, value: activity.name || "Training", hidden: true });
+      let savedName = activity.name || "Training";
+      const finishNameEdit = async () => {
+        const name = editName.value.trim().slice(0, 100);
+        if (!name || name === savedName) {
+          editName.hidden = true;
+          nameHeading.hidden = false;
+          return;
+        }
+        try {
+          await api("PATCH", `/api/activities/${encodeURIComponent(activity.id)}`, { name });
+          savedName = name;
+          status.textContent = "Naam opgeslagen.";
+          editName.hidden = true;
+          nameHeading.hidden = false;
+          await loadActivities();
+        } catch (error) { status.textContent = error.message; }
+      };
+      editName.addEventListener("blur", finishNameEdit);
+      editName.addEventListener("keydown", event => {
+        if (event.key === "Enter") { event.preventDefault(); editName.blur(); }
+        if (event.key === "Escape") { editName.value = savedName; editName.blur(); }
+      });
+      const editNameButton = h("button", { class: "activity-edit", type: "button", text: "✎", "aria-label": `Wijzig naam van ${activity.name || "deze activiteit"}`, title: "Naam wijzigen", onclick: () => {
+        nameHeading.hidden = true;
+        editName.hidden = false;
+        editName.focus();
+        editName.select();
+      }});
       const deleteButton = h("button", { class: "btn ghost small danger-button", type: "button", text: "Verwijderen", onclick: async () => {
         if (!window.confirm("Deze activiteit verwijderen?")) return;
         try {
@@ -711,7 +741,8 @@ function viewActivities() {
         h("div", { class: "activity-metrics", "aria-label": "Kerngegevens" },
           metric("Tijd", summaryMetrics.find(value => value.includes("min") || value.includes(" u "))),
           metric("Afstand", summaryMetrics.find(value => value.endsWith(" km")))),
-        h("div", { class: "activity-actions" }, deleteButton),
+        h("div", { class: "activity-actions" }, editNameButton, deleteButton),
+        editName,
         toggleDetails, details
       ));
     }

@@ -206,6 +206,10 @@ fieldset.days legend { padding: 0 6px; font-weight: 600; font-size: .92rem; }
 .activity-metric span { color: var(--muted); font-size: .72rem; }
 .activity-metric strong { font-size: .95rem; }
 .activity-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.activity-edit { display: inline-grid; width: 34px; height: 34px; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 8px; background: transparent; color: #607466; font-size: 1.15rem; line-height: 1; cursor: pointer; }
+.activity-edit:hover { border-color: #d7e2d3; background: #f1f7ee; color: var(--accent); }
+.activity-edit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.activity-name-input { min-width: 0; margin: -2px 0 2px; }
 .activity-delete { display: inline-grid; width: 34px; height: 34px; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 8px; background: transparent; color: #8c655f; font-size: 1rem; line-height: 1; cursor: pointer; }
 .activity-delete:hover { border-color: #e6cbc7; background: #fff5f3; color: #a33f35; }
 .activity-delete:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

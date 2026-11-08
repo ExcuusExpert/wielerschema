@@ -67,6 +67,7 @@ class El {
   setAttribute(k, v) { this.attrs[k] = v; if (k === "value") this._value = String(v); if (k === "checked") this.checked = true; }
   removeAttribute(k) { delete this.attrs[k]; }
   focus() {}
+  select() {}
   getAttribute(k) { return this.attrs[k] ?? null; }
   addEventListener(t, fn) { (this.listeners[t] ||= []).push(fn); }
   click() { if (this.attrs.download) downloads.push(this.attrs.download); for (const fn of this.listeners.click || []) fn({ preventDefault() {} }); }
