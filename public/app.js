@@ -615,6 +615,7 @@ function viewActivities() {
     if (!selected) { status.textContent = "Kies eerst een FIT-bestand."; return; }
     status.textContent = "FIT-bestand verwerken…";
     try {
+      const startedAt = Date.now();
       const body = new FormData();
       body.append("file", selected, selected.name);
       body.append("name", activityName.value.trim());
@@ -622,6 +623,8 @@ function viewActivities() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || "Het FIT-bestand kon niet worden geïmporteerd.");
       file.value = "";
+      status.textContent = data.coach_feedback ? "De coach bekijkt je rit…" : "Activiteit geïmporteerd.";
+      if (data.coach_feedback) await new Promise(resolve => setTimeout(resolve, Math.max(0, 10000 - (Date.now() - startedAt))));
       status.textContent = data.coach_feedback || "Activiteit geïmporteerd.";
       state.unreadCoach += data.coach_feedback ? 1 : 0;
       renderNav("activities");

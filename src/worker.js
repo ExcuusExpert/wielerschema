@@ -756,6 +756,24 @@ async function deleteActivity(env, user, activityId) {
   return json({ ok: true });
 }
 
+async function activityCoachFeedback(env, user, activity) {
+  const prompt = `<activiteit>${JSON.stringify({
+    datum: activity.start_date_local,
+    duur_minuten: activity.elapsed_time ? Math.round(activity.elapsed_time / 60) : null,
+    afstand_km: activity.distance != null ? Number((activity.distance / 1000).toFixed(1)) : null,
+    gemiddelde_hartslag: activity.average_heartrate,
+    maximale_hartslag: activity.max_heartrate,
+    gemiddeld_vermogen: activity.average_watts,
+    hoogtemeters: activity.total_elevation_gain
+  })}</activiteit>
+Schrijf één kort, persoonlijk coachbericht in het Nederlands over deze fietstraining. Benoem alleen waarden die aanwezig zijn, verzin niets en geef geen medische beoordeling. Wissel je formulering af; reageer inhoudelijk op de combinatie van duur, afstand en intensiteit. Geef uitsluitend JSON in dit formaat: {"feedback":"maximaal 3 korte zinnen"}.`;
+  const allowed = await aiAllowed(env, user);
+  if (!allowed.ok) return null;
+  const result = await askGroqJson(env, prompt, 180);
+  const feedback = result.data?.feedback;
+  return typeof feedback === "string" ? cleanCoachText(feedback, 500) : null;
+}
+
 async function importFit(request, env, user) {
   const contentLength = Number(request.headers.get("Content-Length") || 0);
   if (contentLength > MAX_FIT_BYTES + 100000) return json({ error: "too_large", message: "Dit FIT-bestand is groter dan 10 MB." }, 413);
@@ -784,18 +802,11 @@ async function importFit(request, env, user) {
     const offset = Math.max(0, Math.min(plan.total_weeks * 7 - 1, daysBetween(plan.start_date, activity.start_date_local.slice(0, 10))));
     const weekNo = Math.floor(offset / 7) + 1;
     const dayNo = offset % 7;
-    const distanceText = activity.distance != null ? `${(activity.distance / 1000).toFixed(1)} km` : "een mooie afstand";
-    const feedback = [
-      `Sterke rit vandaag! Je hebt ${distanceText} weggewerkt`,
-      `Mooi doorgetrapt! Deze training was ${distanceText}`,
-      `Lekker bezig: ${distanceText} op de teller`
-    ][Math.floor((activity.distance || now) / 1000) % 3];
-    coach_feedback = `${feedback}${activity.elapsed_time ? ` in ${Math.round(activity.elapsed_time / 60)} minuten` : ""}.`;
-    if (activity.average_heartrate != null) coach_feedback += ` Je gemiddelde hartslag was ${Math.round(activity.average_heartrate)} bpm`;
-    if (activity.max_heartrate != null) coach_feedback += ` en je maximale hartslag ${Math.round(activity.max_heartrate)} bpm`;
-    if (activity.average_watts != null) coach_feedback += `. Gemiddeld trapte je ${Math.round(activity.average_watts)} watt`;
-    const closing = ["Dat is mooi kopwerk — houd dit vast!", "Je elastiek bleef vandaag mooi strak.", "Zo bouw je stap voor stap koersbenen op."][Math.floor(now / 1000) % 3];
-    coach_feedback += ` ${closing}`;
+    coach_feedback = await activityCoachFeedback(env, user, activity);
+    if (!coach_feedback) {
+      const distanceText = activity.distance != null ? `${(activity.distance / 1000).toFixed(1)} km` : "een mooie afstand";
+      coach_feedback = `Je hebt ${distanceText} gereden${activity.elapsed_time ? ` in ongeveer ${Math.round(activity.elapsed_time / 60)} minuten` : ""}. Mooie training om verder op te bouwen.`;
+    }
     await env.DB.prepare(
       "INSERT INTO coach_messages (id, user_id, week_no, day_no, role, content, updated, created_at) VALUES (?, ?, ?, ?, 'assistant', ?, 0, ?)"
     ).bind(randomHex(12), user.id, weekNo, dayNo, coach_feedback, now + 1).run();

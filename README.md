@@ -21,7 +21,7 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 - Een gelijkmatige training wordt als één zone getoond; intervalblokken houden hun eigen zonehoogte. Deel of download een volledige trainingsweek als PNG-afbeelding.
 - De TrainingPeaks-import is verwijderd. Een optionele prompt om een training in TrainingPeaks AI te laten opbouwen is nog beschikbaar vanuit de trainingsdetails en neemt de actuele duur, zones en intervalblokken mee.
 - Na afloop vraagt de coach in de chat hoe je week ging; op basis van je antwoord maakt die de volgende week.
-- Activiteiten en automatische trainings- of herstelmetrics zijn nog niet beschikbaar zolang de externe koppelingen niet actief zijn.
+- FIT-activiteiten kunnen handmatig worden geïmporteerd, bekeken met grafieken en routekaart, en krijgen na ongeveer tien seconden persoonlijke AI-feedback van de coach. Automatische trainings- of herstelmetrics via externe koppelingen zijn nog niet beschikbaar zolang die koppelingen niet actief zijn.
 - Elke voorgestelde wijziging aan een training verschijnt eerst ter beoordeling en wordt pas na bevestiging toegepast.
 - Schema van een week downloaden als agenda (.ics).
 - Onder Account kun je je geboortedatum, meetapparatuur en trainingszones aanpassen, je gebruikersnaam of wachtwoord wijzigen, je gegevens downloaden en je account verwijderen.
