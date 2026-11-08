@@ -57,7 +57,7 @@ globalThis.fetch = async (url, init) => {
 const downloads = [];
 class TextNode { constructor(t) { this.nodeType = 3; this.data = t; } get textContent() { return this.data; } }
 class El {
-  constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.attrs = {}; this.listeners = {}; this.className = ""; this.disabled = false; this._value = undefined; this.checked = false;
+  constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.attrs = {}; this.listeners = {}; this.className = ""; this.disabled = false; this._value = undefined; this.checked = false; this.style = {};
     this.classList = { add: (c) => { this.className += " " + c; } }; }
   get firstChild() { return this.children[0] || null; }
   appendChild(c) { this.children.push(c); c.parent = this; return c; }
@@ -99,7 +99,7 @@ const sandbox = {
       const el = new El(tag);
       if (tag === "canvas") {
         el.getContext = () => ({
-          beginPath() {}, roundRect() {}, rect() {}, fill() {}, stroke() {}, fillRect() {}, fillText() {},
+          beginPath() {}, roundRect() {}, rect() {}, arc() {}, fill() {}, stroke() {}, fillRect() {}, fillText() {},
           measureText: text => ({ width: String(text).length * 10 })
         });
         el.toBlob = callback => callback({ type: "image/png", size: 1 });

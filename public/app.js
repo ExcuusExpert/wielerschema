@@ -656,8 +656,8 @@ function viewActivities() {
         Number.isFinite(Number(sample.latitude)) && Number.isFinite(Number(sample.longitude)));
       const routeMap = routePoints.length > 1
         ? h("div", { class: "activity-chart-block" },
-          h("h3", { text: "Routekaart" }),
-          h("canvas", { class: "activity-map", width: 720, height: 300, "aria-label": "Kaart van je fietsroute" }))
+          h("h3", { text: "Jouw route" }),
+          h("div", { class: "activity-map", "aria-label": "Kaart van je fietsroute" }))
         : null;
       if (routeMap) setTimeout(() => drawRouteMap(routeMap.children[1], routePoints), 0);
       const detailMetrics = [
@@ -674,19 +674,16 @@ function viewActivities() {
         routeMap,
         charts.length ? charts : h("p", { class: "hint", text: "Geen detailmetingen beschikbaar in dit bestand." })
       );
-      const toggleDetails = h("button", { class: "btn ghost small activity-toggle", type: "button", "aria-expanded": "false", text: "Meer details", onclick: () => {
-        const open = details.hidden;
-        if (open) {
-          details.hidden = false;
-          toggleDetails.setAttribute("aria-expanded", "true");
-          toggleDetails.textContent = "Minder details";
-        } else {
-          details.hidden = true;
-          toggleDetails.setAttribute("aria-expanded", "false");
-          toggleDetails.textContent = "Meer details";
-        }
+      let detailsOpen = false;
+      const toggleDetails = h("button", { class: "btn ghost small activity-toggle", type: "button", "aria-expanded": "false", text: "Bekijk details", onclick: () => {
+        detailsOpen = !detailsOpen;
+        details.hidden = !detailsOpen;
+        if (detailsOpen) details.removeAttribute("hidden");
+        else details.setAttribute("hidden", "");
+        toggleDetails.setAttribute("aria-expanded", String(detailsOpen));
+        toggleDetails.textContent = detailsOpen ? "Verberg details" : "Bekijk details";
       }});
-      details.hidden = true;
+      details.setAttribute("hidden", "");
       const heading = h("div", { class: "activity-item-heading" },
         h("h2", { text: activity.name || "Training" }),
         h("time", { class: "muted", datetime: activity.start_date_local || activity.date, text: activityDateLabel(activity.start_date_local || activity.date) }));
@@ -721,9 +718,14 @@ function viewActivities() {
         activity.average_heartrate ? `${Math.round(activity.average_heartrate)} bpm gemiddeld` : "",
         activity.average_watts ? `${Math.round(activity.average_watts)} W gemiddeld` : ""
       ].filter(Boolean);
+      const metric = (label, value) => value ? h("div", { class: "activity-metric" }, h("span", { text: label }), h("strong", { text: value })) : null;
       list.appendChild(h("article", { class: "card activity-item" },
         heading, editName, saveName,
-        h("div", { class: "activity-metrics", "aria-label": "Kerngegevens", text: summaryMetrics.join(" · ") }),
+        h("div", { class: "activity-metrics", "aria-label": "Kerngegevens" },
+          metric("Tijd", summaryMetrics.find(value => value.includes("min") || value.includes(" u "))),
+          metric("Afstand", summaryMetrics.find(value => value.endsWith(" km"))),
+          metric("Gem. hartslag", activity.average_heartrate ? `${Math.round(activity.average_heartrate)} bpm` : ""),
+          metric("Gem. vermogen", activity.average_watts ? `${Math.round(activity.average_watts)} W` : "")),
         h("div", { class: "activity-actions" }, editNameButton, deleteButton),
         toggleDetails, details
       ));
@@ -759,34 +761,56 @@ function viewActivities() {
     context.fillText(format(min), 8, height - 4);
   }
   function drawRouteMap(canvas, points) {
-    const context = canvas.getContext("2d");
+    const width = 720, height = 360, tileSize = 256;
+    const project = (latitude, longitude, zoom) => {
+      const scale = 2 ** zoom;
+      const x = (longitude + 180) / 360 * scale * tileSize;
+      const sine = Math.sin(latitude * Math.PI / 180);
+      const y = (0.5 - Math.log((1 + sine) / (1 - sine)) / (4 * Math.PI)) * scale * tileSize;
+      return { x, y };
+    };
+    let zoom = 16;
+    while (zoom > 10) {
+      const projected = points.map(point => project(Number(point.latitude), Number(point.longitude), zoom));
+      const rangeX = Math.max(...projected.map(point => point.x)) - Math.min(...projected.map(point => point.x));
+      const rangeY = Math.max(...projected.map(point => point.y)) - Math.min(...projected.map(point => point.y));
+      if (rangeX < width * .8 && rangeY < height * .8) break;
+      zoom--;
+    }
+    const projected = points.map(point => project(Number(point.latitude), Number(point.longitude), zoom));
+    const centerX = (Math.min(...projected.map(point => point.x)) + Math.max(...projected.map(point => point.x))) / 2;
+    const centerY = (Math.min(...projected.map(point => point.y)) + Math.max(...projected.map(point => point.y))) / 2;
+    clear(canvas);
+    const left = Math.floor((centerX - width / 2) / tileSize);
+    const top = Math.floor((centerY - height / 2) / tileSize);
+    for (let tileX = left; tileX <= left + 3; tileX++) {
+      for (let tileY = top; tileY <= top + 2; tileY++) {
+        const image = h("img", { class: "activity-map-tile", src: `https://tile.openstreetmap.org/${zoom}/${tileX}/${tileY}.png`, alt: "", draggable: false });
+        image.style.left = `${tileX * tileSize - (centerX - width / 2)}px`;
+        image.style.top = `${tileY * tileSize - (centerY - height / 2)}px`;
+        canvas.appendChild(image);
+      }
+    }
+    const route = h("canvas", { width, height, class: "activity-map-route", "aria-hidden": "true" });
+    canvas.appendChild(route);
+    const context = route.getContext("2d");
     if (!context) return;
-    const padding = 28;
-    const minLat = Math.min(...points.map(point => Number(point.latitude)));
-    const maxLat = Math.max(...points.map(point => Number(point.latitude)));
-    const minLon = Math.min(...points.map(point => Number(point.longitude)));
-    const maxLon = Math.max(...points.map(point => Number(point.longitude)));
-    const scale = Math.max(maxLat - minLat, (maxLon - minLon) * Math.cos((minLat + maxLat) / 2 * Math.PI / 180), 0.00001);
-    const point = sample => ({
-      x: padding + ((Number(sample.longitude) - minLon) / scale) * (canvas.width - padding * 2),
-      y: canvas.height - padding - ((Number(sample.latitude) - minLat) / scale) * (canvas.height - padding * 2)
-    });
-    context.fillStyle = "#eef4eb";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.strokeStyle = "#587d3e";
-    context.lineWidth = 4;
+    const position = point => ({ x: point.x - (centerX - width / 2), y: point.y - (centerY - height / 2) });
+    context.strokeStyle = "#ffffff";
+    context.lineWidth = 8;
+    context.lineJoin = "round";
     context.beginPath();
-    points.forEach((sample, index) => {
-      const position = point(sample);
-      index ? context.lineTo(position.x, position.y) : context.moveTo(position.x, position.y);
-    });
+    projected.forEach((point, index) => { const p = position(point); index ? context.lineTo(p.x, p.y) : context.moveTo(p.x, p.y); });
     context.stroke();
-    const start = point(points[0]);
-    const finish = point(points[points.length - 1]);
-    context.fillStyle = "#3e6530";
-    context.fillRect(start.x - 5, start.y - 5, 10, 10);
-    context.fillStyle = "#b6534a";
-    context.fillRect(finish.x - 5, finish.y - 5, 10, 10);
+    context.strokeStyle = "#d84b3e";
+    context.lineWidth = 4;
+    context.stroke();
+    for (const [point, color] of [[projected[0], "#287a45"], [projected.at(-1), "#d84b3e"]]) {
+      const p = position(point);
+      context.fillStyle = color;
+      context.beginPath(); context.arc(p.x, p.y, 7, 0, Math.PI * 2); context.fill();
+    }
+    canvas.appendChild(h("a", { class: "activity-map-attribution", href: "https://www.openstreetmap.org/copyright", target: "_blank", rel: "noreferrer", text: "Kaartgegevens © OpenStreetMap" }));
   }
   const loadActivities = async () => {
     try { renderActivities((await api("GET", "/api/activities")).activities || []); }
