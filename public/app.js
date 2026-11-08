@@ -618,7 +618,7 @@ function viewActivities() {
     try { renderActivities((await api("GET", "/api/activities")).activities || []); }
     catch (error) { status.textContent = error.message; }
   };
-  const importForm = h("form", { class: "card stack", onsubmit: uploadFit },
+  const importForm = h("form", { class: "card stack fit-upload-card", onsubmit: uploadFit },
     h("h2", { text: "FIT-bestand importeren" }),
     h("p", { class: "muted", text: "Upload een training uit je fietscomputer of sportapp. Het bestand blijft aan jouw account gekoppeld." }),
     field("FIT-bestand", file, "Maximaal 10 MB."), status,

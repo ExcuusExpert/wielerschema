@@ -606,13 +606,14 @@ async function readJson(request) {
 
 function fitValue(view, offset, size, baseType, littleEndian) {
   if (offset + size > view.byteLength) return null;
-  if (baseType === 0x02 || baseType === 0x00 || baseType === 0x0a) return size === 1 ? view.getUint8(offset) : null;
-  if (baseType === 0x83) return size === 2 ? view.getInt16(offset, littleEndian) : null;
-  if (baseType === 0x84 || baseType === 0x8b) return size === 2 ? view.getUint16(offset, littleEndian) : null;
-  if (baseType === 0x85) return size === 4 ? view.getInt32(offset, littleEndian) : null;
-  if (baseType === 0x86 || baseType === 0x8c) return size === 4 ? view.getUint32(offset, littleEndian) : null;
-  if (baseType === 0x88) return size === 4 ? view.getFloat32(offset, littleEndian) : null;
-  if (baseType === 0x89) return size === 8 ? view.getFloat64(offset, littleEndian) : null;
+  if (baseType === 0x00 || baseType === 0x02 || baseType === 0x0a) return size === 1 ? view.getUint8(offset) : null;
+  if (baseType === 0x01) return size === 1 ? view.getInt8(offset) : null;
+  if (baseType === 0x03) return size === 2 ? view.getInt16(offset, littleEndian) : null;
+  if (baseType === 0x04 || baseType === 0x0b) return size === 2 ? view.getUint16(offset, littleEndian) : null;
+  if (baseType === 0x05) return size === 4 ? view.getInt32(offset, littleEndian) : null;
+  if (baseType === 0x06 || baseType === 0x0c) return size === 4 ? view.getUint32(offset, littleEndian) : null;
+  if (baseType === 0x08) return size === 4 ? view.getFloat32(offset, littleEndian) : null;
+  if (baseType === 0x09) return size === 8 ? view.getFloat64(offset, littleEndian) : null;
   return null;
 }
 
@@ -637,8 +638,10 @@ function parseFit(bytes) {
     const header = view.getUint8(offset++);
     const compressed = Boolean(header & 0x80);
     const local = compressed ? (header >> 5) & 3 : header & 0x0f;
-    if (header & 0x40) {
+    if (!compressed && (header & 0x40)) {
       if (offset + 5 > end) throw new Error("Ongeldige FIT-definitie.");
+      const hasDeveloperFields = Boolean(header & 0x20);
+      offset++;
       const littleEndian = view.getUint8(offset++) === 0;
       const global = view.getUint16(offset, littleEndian); offset += 2;
       const fieldCount = view.getUint8(offset++);
@@ -647,10 +650,18 @@ function parseFit(bytes) {
         if (offset + 3 > end) throw new Error("Ongeldige FIT-velden.");
         fields.push({ number: view.getUint8(offset++), size: view.getUint8(offset++), baseType: view.getUint8(offset++) & 0x1f });
       }
-      const developerCount = view.getUint8(offset++);
-      offset += developerCount * 3;
+      const developerFields = [];
+      if (hasDeveloperFields) {
+        if (offset >= end) throw new Error("Ongeldige FIT-ontwikkelaarsvelden.");
+        const developerCount = view.getUint8(offset++);
+        for (let i = 0; i < developerCount; i++) {
+          if (offset + 3 > end) throw new Error("Ongeldige FIT-ontwikkelaarsvelden.");
+          developerFields.push({ size: view.getUint8(offset + 1) });
+          offset += 3;
+        }
+      }
       if (offset > end) throw new Error("Ongeldige FIT-definitie.");
-      definitions.set(local, { global, fields, littleEndian });
+      definitions.set(local, { global, fields, developerFields, littleEndian });
       continue;
     }
     const definition = definitions.get(local);
@@ -661,6 +672,7 @@ function parseFit(bytes) {
       if (value !== null) values[field.number] = value;
       offset += field.size;
     }
+    for (const field of definition.developerFields) offset += field.size;
     if (compressed && lastTimestamp !== null) {
       let timestamp = (lastTimestamp & ~0x1f) | (header & 0x1f);
       if (timestamp <= lastTimestamp) timestamp += 0x20;
