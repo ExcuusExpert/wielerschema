@@ -710,7 +710,7 @@ function viewActivities() {
         heading,
         h("div", { class: "activity-metrics", "aria-label": "Kerngegevens" },
           metric("Tijd", summaryMetrics.find(value => value.includes("min") || value.includes(" u "))),
-          metric("Afstand", summaryMetrics.find(value => value.endsWith(" km"))),
+          metric("Afstand", summaryMetrics.find(value => value.endsWith(" km")))),
         h("div", { class: "activity-actions" }, deleteButton),
         toggleDetails, details
       ));
