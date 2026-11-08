@@ -686,6 +686,19 @@ function parseFit(bytes) {
   const first = records[0] || {};
   const last = records[records.length - 1] || {};
   const start = fitTimestamp(session?.[2] ?? first[253]);
+  const samples = records
+    .filter(record => record[253] !== undefined)
+    .map(record => ({
+      time: fitTimestamp(record[253]),
+      distance: record[5] != null ? record[5] / 100 : null,
+      speed: record[6] != null ? record[6] / 1000 : null,
+      heartrate: record[3] ?? null,
+      power: record[7] ?? null,
+      altitude: record[2] != null ? record[2] / 5 - 500 : null
+    }))
+    .filter(sample => sample.time)
+    .filter((_, index, all) => index % Math.max(1, Math.ceil(all.length / 300)) === 0)
+    .slice(0, 300);
   const activity = {
     source: "fit",
     name: "Geïmporteerde training",
@@ -698,7 +711,8 @@ function parseFit(bytes) {
     average_heartrate: session?.[16] ?? null,
     max_heartrate: session?.[17] ?? null,
     average_watts: session?.[20] ?? null,
-    max_watts: session?.[21] ?? null
+    max_watts: session?.[21] ?? null,
+    samples
   };
   if (!activity.start_date_local) throw new Error("Er staat geen datum in dit FIT-bestand.");
   return activity;
@@ -729,7 +743,23 @@ async function importFit(request, env, user) {
      VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, activity_id) DO UPDATE SET
      activity_date=excluded.activity_date, data=excluded.data, updated_at=excluded.updated_at`
   ).bind(user.id, id, activity.start_date_local.slice(0, 10), JSON.stringify(activity), now).run();
-  return json({ ok: true, activity: { id, date: activity.start_date_local.slice(0, 10), ...activity } });
+  const plan = await env.DB.prepare("SELECT start_date, total_weeks FROM plans WHERE user_id = ?").bind(user.id).first();
+  let coach_feedback = null;
+  if (plan) {
+    const offset = Math.max(0, Math.min(plan.total_weeks * 7 - 1, daysBetween(plan.start_date, activity.start_date_local.slice(0, 10))));
+    const weekNo = Math.floor(offset / 7) + 1;
+    const dayNo = offset % 7;
+    coach_feedback = `Goed gedaan met je training! Je reed ${activity.elapsed_time ? `${Math.round(activity.elapsed_time / 60)} minuten` : "een mooie rit"}`;
+    if (activity.distance != null) coach_feedback += ` en ${Math.round(activity.distance / 100) / 10} km`;
+    if (activity.average_heartrate != null) coach_feedback += `. Je gemiddelde hartslag was ${Math.round(activity.average_heartrate)} bpm`;
+    if (activity.max_heartrate != null) coach_feedback += ` en je maximale hartslag ${Math.round(activity.max_heartrate)} bpm`;
+    if (activity.average_watts != null) coach_feedback += `. Gemiddeld trapte je ${Math.round(activity.average_watts)} watt`;
+    coach_feedback += ". Lekker kopwerk — blijf zo stoempen!";
+    await env.DB.prepare(
+      "INSERT INTO coach_messages (id, user_id, week_no, day_no, role, content, updated, created_at) VALUES (?, ?, ?, ?, 'assistant', ?, 0, ?)"
+    ).bind(randomHex(12), user.id, weekNo, dayNo, coach_feedback, now + 1).run();
+  }
+  return json({ ok: true, coach_feedback, activity: { id, date: activity.start_date_local.slice(0, 10), ...activity } });
 }
 
 async function handleApi(request, env, url) {

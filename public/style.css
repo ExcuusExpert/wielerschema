@@ -192,6 +192,8 @@ fieldset.days legend { padding: 0 6px; font-weight: 600; font-size: .92rem; }
 .activity-item-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .activity-item-heading h2 { margin: 0; font-size: 1.05rem; }
 .activity-item-heading time { flex: 0 0 auto; font-size: .82rem; }
+.activity-details { gap: 8px; }
+.activity-chart { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; background: #eef4eb; }
 .activity-card { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
 .activity-date-badge { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 58px; border-radius: 12px; background: #edf3e8; color: #3e6530; }
 .activity-date-badge strong { font-size: 1.05rem; }

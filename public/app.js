@@ -593,7 +593,7 @@ function viewActivities() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || "Het FIT-bestand kon niet worden geïmporteerd.");
       file.value = "";
-      status.textContent = "Activiteit geïmporteerd.";
+      status.textContent = data.coach_feedback || "Activiteit geïmporteerd.";
       await loadActivities();
     } catch (error) { status.textContent = error.message; }
   };
@@ -606,14 +606,54 @@ function viewActivities() {
     for (const activity of activities) {
       const duration = Number(activity.elapsed_time);
       const distance = Number(activity.distance);
+      const chart = activity.samples?.length ? h("canvas", { class: "activity-chart", width: 720, height: 180, "aria-label": "Grafiek van je activiteit" }) : null;
+      if (chart) setTimeout(() => drawActivityChart(chart, activity.samples), 0);
+      const details = h("div", { class: "activity-details stack" },
+        h("p", { class: "muted", text: [
+          activity.max_heartrate ? `max ${Math.round(activity.max_heartrate)} bpm` : "",
+          activity.total_elevation_gain ? `${Math.round(activity.total_elevation_gain)} m klimmen` : "",
+          activity.average_speed ? `${(Number(activity.average_speed) * 3.6).toFixed(1)} km/u gemiddeld` : "",
+          activity.max_watts ? `max ${Math.round(activity.max_watts)} W` : ""
+        ] }),
+        chart || h("p", { class: "hint", text: "Geen detailmetingen beschikbaar in dit bestand." })
+      );
       list.appendChild(h("article", { class: "card activity-item" },
         h("div", { class: "activity-item-heading" },
           h("h2", { text: activity.name || "Training" }),
           h("time", { class: "muted", datetime: activity.start_date_local || activity.date, text: String(activity.start_date_local || activity.date || "").slice(0, 10) })),
-        h("p", { class: "muted", text: [Number.isFinite(duration) && duration > 0 ? minutesText(Math.round(duration / 60)) : "", Number.isFinite(distance) && distance > 0 ? `${(distance / 1000).toFixed(1)} km` : "", activity.average_heartrate ? `${Math.round(activity.average_heartrate)} bpm gemiddeld` : "", activity.average_watts ? `${Math.round(activity.average_watts)} W gemiddeld` : "" ]})
+        h("p", { class: "muted", text: [Number.isFinite(duration) && duration > 0 ? minutesText(Math.round(duration / 60)) : "", Number.isFinite(distance) && distance > 0 ? `${(distance / 1000).toFixed(1)} km` : "", activity.average_heartrate ? `${Math.round(activity.average_heartrate)} bpm gemiddeld` : "", activity.average_watts ? `${Math.round(activity.average_watts)} W gemiddeld` : "" ]}),
+        details
       ));
     }
   };
+  function drawActivityChart(canvas, samples) {
+    const context = canvas.getContext("2d");
+    if (!context || !samples.length) return;
+    const width = canvas.width;
+    const height = canvas.height;
+    const values = samples.map(sample => Number(sample.heartrate)).filter(Number.isFinite);
+    if (!values.length) return;
+    const min = Math.max(0, Math.min(...values) - 5);
+    const max = Math.max(min + 10, Math.max(...values) + 5);
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = "#eef4eb";
+    context.fillRect(0, 0, width, height);
+    context.strokeStyle = "#587d3e";
+    context.lineWidth = 3;
+    context.beginPath();
+    samples.forEach((sample, index) => {
+      const value = Number(sample.heartrate);
+      if (!Number.isFinite(value)) return;
+      const x = index / Math.max(1, samples.length - 1) * width;
+      const y = height - (value - min) / (max - min) * (height - 20) - 10;
+      index ? context.lineTo(x, y) : context.moveTo(x, y);
+    });
+    context.stroke();
+    context.fillStyle = "#65736a";
+    context.font = "12px system-ui";
+    context.fillText(`${Math.round(max)} bpm`, 8, 16);
+    context.fillText(`${Math.round(min)} bpm`, 8, height - 4);
+  }
   const loadActivities = async () => {
     try { renderActivities((await api("GET", "/api/activities")).activities || []); }
     catch (error) { status.textContent = error.message; }
