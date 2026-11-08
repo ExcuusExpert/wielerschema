@@ -528,12 +528,15 @@ function extractJson(text) {
 
 // Geeft { data } | { busy } | { failed }
 async function askGroqJson(env, user, maxTokens) {
+  if (typeof env.GROQ_API_KEY !== "string" || !env.GROQ_API_KEY.trim()) return { failed: true, auth: true };
   let rateLimited = false;
+  let lastStatus = null;
   const variants = [{ reasoning: true, jsonMode: true }, { reasoning: false, jsonMode: true }, { reasoning: false, jsonMode: false }];
   for (const model of MODELS) {
     for (const v of variants) {
       const body = {
-        model, temperature: 0.6, max_completion_tokens: maxTokens,
+        // GPT-OSS reasoning models reject non-default sampling parameters.
+        model, max_completion_tokens: maxTokens,
         messages: [{ role: "system", content: SYSTEM_COACH }, { role: "user", content: user }]
       };
       if (v.reasoning) { body.reasoning_effort = "low"; body.include_reasoning = false; }
@@ -554,12 +557,14 @@ async function askGroqJson(env, user, maxTokens) {
         if (parsed && typeof parsed === "object") return { data: parsed };
         break;
       }
+      lastStatus = res.status;
       if (res.status === 429) { rateLimited = true; break; }
       if (res.status === 400) continue; // andere variant proberen
       if (res.status === 401 || res.status === 403) return { failed: true, auth: true };
       break;
     }
   }
+  if (lastStatus) log("groq_failed", { status: lastStatus });
   return rateLimited ? { busy: true } : { failed: true };
 }
 
@@ -577,6 +582,7 @@ async function askValidated(env, prompt, maxTokens, validate) {
 
 function aiError(r) {
   if (r.busy) return json({ error: "busy", message: "De AI is even te druk. Probeer het over een minuut opnieuw." }, 503);
+  if (r.auth) return json({ error: "ai_config", message: "De AI-koppeling is niet ingesteld of de sleutel is ongeldig." }, 503);
   return json({ error: "upstream", message: "Het maken van het schema is niet gelukt. Probeer het opnieuw." }, 502);
 }
 
