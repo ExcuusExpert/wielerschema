@@ -604,6 +604,23 @@ test("doorlopende coachchat toont gesprekken samen en neemt eerdere berichten me
   assert.equal(conversation.data.messages[3].role, "assistant");
 });
 
+test("coach gebruikt het opgeslagen weekschema voor een weekoverzicht", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env, "weekoverzicht");
+  const created = await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
+  const before = groqCalls;
+  const reply = await api(env, "POST", "/api/coach/chat", {
+    week_no: 1, day_no: 0, bericht: "Wat is mijn schema van deze week?", global: true
+  }, { cookie });
+  assert.equal(reply.status, 200);
+  assert.match(reply.data.antwoord, /Dit is je echte schema voor week 1/);
+  const dayNames = ["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag"];
+  for (const day of created.data.weeks[0].dagen) {
+    assert.ok(reply.data.antwoord.includes(day.type === "rust" ? `${dayNames[day.dag]}: rustdag.` : `${dayNames[day.dag]}: ${day.titel}, ${day.minuten} min`));
+  }
+  assert.equal(groqCalls, before);
+});
+
 test("coach zet een club-MTB-rit op de genoemde zaterdag en laat intensiteit leeg", async () => {
   const env = makeEnv();
   const cookie = await signup(env);

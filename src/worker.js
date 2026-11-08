@@ -1205,6 +1205,36 @@ async function recentCoachMessages(env, userId) {
   }));
 }
 
+function isWeekOverviewRequest(message) {
+  return /\b(schema|weekschema|weekoverzicht|trainingen)\b/i.test(message) &&
+    /\b(deze week|komende week|weekoverzicht|wat staat er|wat is mijn)\b/i.test(message);
+}
+
+function coachWeekOverview(weekNo, week) {
+  const days = week.dagen.map(day => {
+    const name = DAG_NAMEN[day.dag] || `dag ${day.dag}`;
+    if (day.type === "rust") return `- ${name}: rustdag.`;
+    const blocks = Array.isArray(day.blokken) && day.blokken.length
+      ? ` (${day.blokken.map(block => `${block.minuten} min ${block.zone || "open"} ${block.label}`).join(", ")})`
+      : "";
+    return `- ${name}: ${day.titel || day.type}, ${day.minuten} min${day.zone ? ` in ${day.zone}` : ""}${blocks}.`;
+  });
+  return `Dit is je echte schema voor week ${weekNo}:\n${days.join("\n")}\nTotaal: ${week.totaal_minuten} minuten.`;
+}
+
+async function saveCoachAnswer(env, user, weekNo, dayNo, message, answer) {
+  const now = Date.now();
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO coach_messages (id, user_id, week_no, day_no, role, content, updated, created_at) VALUES (?, ?, ?, ?, 'user', ?, 0, ?)")
+      .bind(randomHex(12), user.id, weekNo, dayNo, message, now),
+    env.DB.prepare("INSERT INTO coach_messages (id, user_id, week_no, day_no, role, content, updated, created_at) VALUES (?, ?, ?, ?, 'assistant', ?, 0, ?)")
+      .bind(randomHex(12), user.id, weekNo, dayNo, answer, now + 1),
+    env.DB.prepare("DELETE FROM coach_messages WHERE user_id = ? AND id NOT IN (SELECT id FROM coach_messages WHERE user_id = ? ORDER BY created_at DESC LIMIT 100)")
+      .bind(user.id, user.id)
+  ]);
+  return json({ antwoord: answer, aangepast: false, plan_updated: false, voorstel: null });
+}
+
 async function getCoachChat(url, env, user) {
   if (url.searchParams.get("global") === "1") {
     const plan = await env.DB.prepare("SELECT 1 FROM plans WHERE user_id = ?").bind(user.id).first();
@@ -1276,6 +1306,9 @@ async function coachChat(request, env, user) {
 
   const intake = JSON.parse(planRow.intake);
   const week = normalizeStoredWeek(JSON.parse(weekRow.detail));
+  if (isWeekOverviewRequest(message)) {
+    return saveCoachAnswer(env, user, weekNo, dayNo, message, coachWeekOverview(weekNo, week));
+  }
   const latest = await env.DB.prepare(
     "SELECT week_no, checkin FROM weeks WHERE user_id = ? ORDER BY week_no DESC LIMIT 1"
   ).bind(user.id).first();

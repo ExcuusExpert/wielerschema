@@ -17,6 +17,7 @@ p { margin: 0; }
 .brand { font-weight: 800; font-size: 1.3rem; color: var(--text); text-decoration: none; letter-spacing: -.035em; }
 .brand span { color: var(--accent); }
 .brand-logo { display: block; width: min(100%, 210px); height: auto; }
+.privacy-header { background: #fff; border-bottom-color: var(--line); }
 nav { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .foot { padding: 18px 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: .85rem; text-align: center; }
 .muted { color: var(--muted); }
