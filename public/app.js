@@ -686,7 +686,7 @@ function viewActivities() {
       details.setAttribute("hidden", "");
       const nameHeading = h("h2", { text: activity.name || "Training" });
       const heading = h("div", { class: "activity-item-heading" },
-        nameHeading,
+        h("div", { class: "activity-title-main" }, nameHeading),
         h("time", { class: "muted", datetime: activity.start_date_local || activity.date, text: activityDateLabel(activity.start_date_local || activity.date) }));
       const editName = h("input", { class: "activity-name-input", type: "text", maxlength: 100, value: activity.name || "Training", hidden: true });
       let savedName = activity.name || "Training";
@@ -729,6 +729,7 @@ function viewActivities() {
       deleteButton.setAttribute("aria-label", `Verwijder ${activity.name || "deze activiteit"}`);
       deleteButton.setAttribute("title", "Activiteit verwijderen");
       deleteButton.className = "activity-delete";
+      heading.children[0].append(editNameButton, deleteButton);
       const summaryMetrics = [
         Number.isFinite(duration) && duration > 0 ? minutesText(Math.round(duration / 60)) : "",
         Number.isFinite(distance) && distance > 0 ? `${(distance / 1000).toFixed(1)} km` : "",
@@ -741,7 +742,6 @@ function viewActivities() {
         h("div", { class: "activity-metrics", "aria-label": "Kerngegevens" },
           metric("Tijd", summaryMetrics.find(value => value.includes("min") || value.includes(" u "))),
           metric("Afstand", summaryMetrics.find(value => value.endsWith(" km")))),
-        h("div", { class: "activity-actions" }, editNameButton, deleteButton),
         editName,
         toggleDetails, details
       ));
