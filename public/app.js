@@ -599,6 +599,7 @@ function viewActivities() {
   state.page = "activities";
   renderNav("activities");
   const file = h("input", { type: "file", accept: ".fit,application/octet-stream", id: "fit-upload" });
+  const activityName = h("input", { type: "text", name: "activity_name", maxlength: 100, placeholder: "Bijv. rustige duurtraining" });
   const status = h("p", { class: "integration-status", role: "status" });
   const list = h("div", { class: "activity-list stack" });
   const uploadFit = async event => {
@@ -609,6 +610,7 @@ function viewActivities() {
     try {
       const body = new FormData();
       body.append("file", selected, selected.name);
+      body.append("name", activityName.value.trim());
       const response = await fetch("/api/activities/import", { method: "POST", credentials: "same-origin", body });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || "Het FIT-bestand kon niet worden geïmporteerd.");
@@ -628,16 +630,28 @@ function viewActivities() {
     for (const activity of activities) {
       const duration = Number(activity.elapsed_time);
       const distance = Number(activity.distance);
-      const chart = activity.samples?.length ? h("canvas", { class: "activity-chart", width: 720, height: 180, "aria-label": "Grafiek van je activiteit" }) : null;
-      if (chart) setTimeout(() => drawActivityChart(chart, activity.samples), 0);
+      const charts = [
+        ["heartrate", "Hartslag", "bpm", "#b6534a"],
+        ["power", "Vermogen", "W", "#587d3e"],
+        ["speed", "Snelheid", "km/u", "#3f7194"],
+        ["altitude", "Hoogte", "m", "#8a6b3f"]
+      ].flatMap(([key, label, unit, color]) => {
+        if (!activity.samples?.some(sample => Number.isFinite(Number(sample[key])))) return [];
+        const canvas = h("canvas", { class: "activity-chart", width: 720, height: 180, "aria-label": `${label}grafiek van je activiteit` });
+        setTimeout(() => drawActivityChart(canvas, activity.samples, key, label, unit, color), 0);
+        return [h("div", { class: "activity-chart-block" }, h("h3", { text: label }), canvas)];
+      });
       const details = h("div", { class: "activity-details stack" },
         h("p", { class: "muted", text: [
+          activity.average_heartrate ? `gem. ${Math.round(activity.average_heartrate)} bpm` : "",
           activity.max_heartrate ? `max ${Math.round(activity.max_heartrate)} bpm` : "",
+          activity.average_watts ? `gem. ${Math.round(activity.average_watts)} W` : "",
+          activity.max_watts ? `max ${Math.round(activity.max_watts)} W` : "",
           activity.total_elevation_gain ? `${Math.round(activity.total_elevation_gain)} m klimmen` : "",
           activity.average_speed ? `${(Number(activity.average_speed) * 3.6).toFixed(1)} km/u gemiddeld` : "",
-          activity.max_watts ? `max ${Math.round(activity.max_watts)} W` : ""
+          activity.max_speed ? `max ${(Number(activity.max_speed) * 3.6).toFixed(1)} km/u` : ""
         ] }),
-        chart || h("p", { class: "hint", text: "Geen detailmetingen beschikbaar in dit bestand." })
+        charts.length ? charts : h("p", { class: "hint", text: "Geen detailmetingen beschikbaar in dit bestand." })
       );
       const toggleDetails = h("button", { class: "btn ghost small activity-toggle", type: "button", text: "Meer details", onclick: () => {
         const open = details.hasAttribute("hidden");
@@ -659,23 +673,23 @@ function viewActivities() {
       ));
     }
   };
-  function drawActivityChart(canvas, samples) {
+  function drawActivityChart(canvas, samples, key, label, unit, color) {
     const context = canvas.getContext("2d");
     if (!context || !samples.length) return;
     const width = canvas.width;
     const height = canvas.height;
-    const values = samples.map(sample => Number(sample.heartrate)).filter(Number.isFinite);
+    const values = samples.map(sample => Number(sample[key])).filter(Number.isFinite);
     if (!values.length) return;
     const min = Math.max(0, Math.min(...values) - 5);
     const max = Math.max(min + 10, Math.max(...values) + 5);
     context.clearRect(0, 0, width, height);
     context.fillStyle = "#eef4eb";
     context.fillRect(0, 0, width, height);
-    context.strokeStyle = "#587d3e";
+    context.strokeStyle = color;
     context.lineWidth = 3;
     context.beginPath();
     samples.forEach((sample, index) => {
-      const value = Number(sample.heartrate);
+      const value = Number(sample[key]);
       if (!Number.isFinite(value)) return;
       const x = index / Math.max(1, samples.length - 1) * width;
       const y = height - (value - min) / (max - min) * (height - 20) - 10;
@@ -684,8 +698,9 @@ function viewActivities() {
     context.stroke();
     context.fillStyle = "#65736a";
     context.font = "12px system-ui";
-    context.fillText(`${Math.round(max)} bpm`, 8, 16);
-    context.fillText(`${Math.round(min)} bpm`, 8, height - 4);
+    const format = value => key === "speed" ? `${(value * 3.6).toFixed(1)} ${unit}` : `${Math.round(value)} ${unit}`;
+    context.fillText(`${label}: ${format(max)}`, 8, 16);
+    context.fillText(format(min), 8, height - 4);
   }
   const loadActivities = async () => {
     try { renderActivities((await api("GET", "/api/activities")).activities || []); }
@@ -694,6 +709,7 @@ function viewActivities() {
   const importForm = h("form", { class: "card stack fit-upload-card", onsubmit: uploadFit },
     h("h2", { text: "FIT-bestand importeren" }),
     h("p", { class: "muted", text: "Upload een training uit je fietscomputer of sportapp. Het bestand blijft aan jouw account gekoppeld." }),
+    field("Naam van de training (optioneel)", activityName, "Laat leeg om de bestandsnaam te gebruiken."),
     field("FIT-bestand", file, "Maximaal 10 MB."), status,
     h("button", { class: "btn", type: "submit", text: "Activiteit importeren" }));
   renderActivities([]);

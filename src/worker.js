@@ -736,6 +736,10 @@ async function importFit(request, env, user) {
   let activity;
   try { activity = parseFit(bytes); }
   catch (error) { return json({ error: "invalid_fit", message: error.message || "Dit FIT-bestand kan niet worden gelezen." }, 400); }
+  const manualName = String(form.get("name") || "").trim().slice(0, 100);
+  const fileName = String(file.name || "").replace(/\.[^.]+$/, "").trim().slice(0, 100);
+  if (manualName) activity.name = manualName;
+  else if (fileName) activity.name = fileName;
   const id = `fit:${await toHex(await crypto.subtle.digest("SHA-256", bytes))}`;
   const now = Date.now();
   await env.DB.prepare(
