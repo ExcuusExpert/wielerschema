@@ -687,19 +687,6 @@ function viewActivities() {
       const heading = h("div", { class: "activity-item-heading" },
         h("h2", { text: activity.name || "Training" }),
         h("time", { class: "muted", datetime: activity.start_date_local || activity.date, text: activityDateLabel(activity.start_date_local || activity.date) }));
-      const editName = h("input", { type: "text", maxlength: 100, value: activity.name || "Training", hidden: true });
-      const saveName = h("button", { class: "btn small", type: "button", text: "Opslaan", hidden: true, onclick: async () => {
-        try {
-          await api("PATCH", `/api/activities/${encodeURIComponent(activity.id)}`, { name: editName.value });
-          await loadActivities();
-        } catch (error) { status.textContent = error.message; }
-      }});
-      const editNameButton = h("button", { class: "btn ghost small", type: "button", text: "Naam wijzigen", onclick: () => {
-        editName.hidden = false;
-        saveName.hidden = false;
-        editNameButton.hidden = true;
-        editName.focus();
-      }});
       const deleteButton = h("button", { class: "btn ghost small danger-button", type: "button", text: "Verwijderen", onclick: async () => {
         if (!window.confirm("Deze activiteit verwijderen?")) return;
         try {
@@ -720,13 +707,11 @@ function viewActivities() {
       ].filter(Boolean);
       const metric = (label, value) => value ? h("div", { class: "activity-metric" }, h("span", { text: label }), h("strong", { text: value })) : null;
       list.appendChild(h("article", { class: "card activity-item" },
-        heading, editName, saveName,
+        heading,
         h("div", { class: "activity-metrics", "aria-label": "Kerngegevens" },
           metric("Tijd", summaryMetrics.find(value => value.includes("min") || value.includes(" u "))),
           metric("Afstand", summaryMetrics.find(value => value.endsWith(" km"))),
-          metric("Gem. hartslag", activity.average_heartrate ? `${Math.round(activity.average_heartrate)} bpm` : ""),
-          metric("Gem. vermogen", activity.average_watts ? `${Math.round(activity.average_watts)} W` : "")),
-        h("div", { class: "activity-actions" }, editNameButton, deleteButton),
+        h("div", { class: "activity-actions" }, deleteButton),
         toggleDetails, details
       ));
     }
