@@ -228,6 +228,10 @@ fieldset.days legend { padding: 0 6px; font-weight: 600; font-size: .92rem; }
 .nav-item, .nav-logout { display: flex; align-items: center; min-height: 44px; padding: 10px 13px; border: 0; border-radius: 10px; background: transparent; color: #58665d; font: inherit; text-align: left; cursor: pointer; }
 .nav-item:hover, .nav-logout:hover { background: #f1f5f0; color: #26352b; }
 .nav-item.active { background: #edf3e8; color: #3e6530; font-weight: 700; }
+.nav-label-with-badge { display: inline-flex; align-items: center; gap: 8px; }
+.coach-unread-badge { display: inline-grid; min-width: 20px; height: 20px; place-items: center; padding: 0 5px; border-radius: 999px; background: #d65b45; color: #fff; font-size: .72rem; font-weight: 800; line-height: 1; }
+.coach-unread-badge::after { content: attr(data-count); }
+.launcher-badge { margin-left: auto; }
 #sidebar-account { display: flex; flex-direction: column; gap: 8px; margin-top: auto; padding-top: 16px; border-top: 1px solid var(--line); }
 .sidebar-username { padding: 0 12px; color: var(--muted); font-size: .88rem; overflow-wrap: anywhere; }
 .nav-logout { font-size: .9rem; }

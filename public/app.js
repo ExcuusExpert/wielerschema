@@ -15,7 +15,7 @@ const nav = document.getElementById("nav");
 const sidebarAccount = document.getElementById("sidebar-account");
 const coachLauncher = document.getElementById("coach-launcher");
 
-const state = { user: null, data: null, week: 1, page: "plan", coachDraft: "" };
+const state = { user: null, data: null, week: 1, page: "plan", coachDraft: "", unreadCoach: 0 };
 
 // ---------- hulpfuncties ----------
 function h(tag, props, ...children) {
@@ -37,6 +37,23 @@ function h(tag, props, ...children) {
 
 function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); }
 function show(...nodes) { clear(app); nodes.flat().forEach(n => n && app.appendChild(n)); window.scrollTo(0, 0); }
+function coachRichText(text) {
+  const fragment = h("span", {});
+  const parts = String(text || "").split(/(\*\*[^*]+\*\*)/g);
+  parts.forEach(part => {
+    if (/^\*\*[^*]+\*\*$/.test(part)) fragment.appendChild(h("strong", { text: part.slice(2, -2) }));
+    else fragment.appendChild(document.createTextNode(part));
+  });
+  return fragment;
+}
+function storageKey() { return state.user ? `wielerschema:coach-read:${state.user}` : ""; }
+function getCoachReadAt() {
+  try { return Number(localStorage.getItem(storageKey()) || 0); } catch { return 0; }
+}
+function markCoachRead() {
+  state.unreadCoach = 0;
+  try { localStorage.setItem(storageKey(), String(Date.now())); } catch {}
+}
 
 async function api(method, path, body) {
   const res = await fetch(path, {
@@ -287,13 +304,15 @@ function renderNav(activePage = state.page) {
     ["account", "Account", viewAccount]
   ];
   for (const [page, label, action] of pages) {
+    const labelNode = page === "coach" && state.unreadCoach
+      ? h("span", { class: "nav-label-with-badge" }, h("span", { text: label }), h("span", { class: "coach-unread-badge", "data-count": String(state.unreadCoach), "aria-label": `${state.unreadCoach} ongelezen coachbericht` }))
+      : h("span", { text: label });
     nav.appendChild(h("button", {
       class: `nav-item${activePage === page ? " active" : ""}`,
       type: "button",
       "aria-current": activePage === page ? "page" : null,
-      text: label,
       onclick: action
-    }));
+    }, labelNode));
   }
   sidebarAccount.append(
     h("span", { class: "sidebar-username", text: state.user }),
@@ -317,6 +336,7 @@ function renderNav(activePage = state.page) {
     h("span", { class: "launcher-copy" },
       h("strong", { text: "Je wielercoach" }),
       h("span", { text: "Stel een vraag" })),
+    state.unreadCoach ? h("span", { class: "coach-unread-badge launcher-badge", "data-count": String(state.unreadCoach), "aria-label": `${state.unreadCoach} ongelezen coachbericht` }) : null,
     h("span", { class: "launcher-arrow", "aria-hidden": "true", text: "↗" })));
 }
 
@@ -594,6 +614,8 @@ function viewActivities() {
       if (!response.ok) throw new Error(data.message || "Het FIT-bestand kon niet worden geïmporteerd.");
       file.value = "";
       status.textContent = data.coach_feedback || "Activiteit geïmporteerd.";
+      state.unreadCoach += data.coach_feedback ? 1 : 0;
+      renderNav("activities");
       await loadActivities();
     } catch (error) { status.textContent = error.message; }
   };
@@ -617,12 +639,23 @@ function viewActivities() {
         ] }),
         chart || h("p", { class: "hint", text: "Geen detailmetingen beschikbaar in dit bestand." })
       );
+      const toggleDetails = h("button", { class: "btn ghost small activity-toggle", type: "button", text: "Meer details", onclick: () => {
+        const open = details.hasAttribute("hidden");
+        if (open) {
+          details.removeAttribute("hidden");
+          toggleDetails.textContent = "Minder details";
+        } else {
+          details.setAttribute("hidden", "");
+          toggleDetails.textContent = "Meer details";
+        }
+      }});
+      details.setAttribute("hidden", "");
       list.appendChild(h("article", { class: "card activity-item" },
         h("div", { class: "activity-item-heading" },
           h("h2", { text: activity.name || "Training" }),
           h("time", { class: "muted", datetime: activity.start_date_local || activity.date, text: String(activity.start_date_local || activity.date || "").slice(0, 10) })),
         h("p", { class: "muted", text: [Number.isFinite(duration) && duration > 0 ? minutesText(Math.round(duration / 60)) : "", Number.isFinite(distance) && distance > 0 ? `${(distance / 1000).toFixed(1)} km` : "", activity.average_heartrate ? `${Math.round(activity.average_heartrate)} bpm gemiddeld` : "", activity.average_watts ? `${Math.round(activity.average_watts)} W gemiddeld` : "" ]}),
-        details
+        toggleDetails, details
       ));
     }
   };
@@ -1288,7 +1321,7 @@ function coachChat(plan, currentWeek) {
     for (const item of items) {
       messages.appendChild(h("div", { class: `chat-message ${item.role === "assistant" ? "coach" : "user"}` },
         h("span", { class: "chat-label", text: item.role === "assistant" ? "WielerSchema-coach" : "Jij" }),
-        h("p", { class: "chat-bubble", text: item.content }),
+        h("p", { class: "chat-bubble" }, coachRichText(item.content)),
         item.updated ? h("span", { class: "hint", text: "Training bijgewerkt" }) : null,
         item.suggestion ? item.suggestion.workout.kind === "event"
           ? h("section", { class: "suggestion-card event-suggestion" },
@@ -1425,6 +1458,7 @@ function coachChat(plan, currentWeek) {
 
 function viewCoach(preserveScroll = false) {
   const scrollY = preserveScroll ? window.scrollY : 0;
+  markCoachRead();
   state.page = "coach";
   renderNav("coach");
   if (!state.data?.plan) return viewIntake();
@@ -1643,6 +1677,13 @@ async function start() {
     }
     state.data = await api("GET", "/api/plan");
     state.profile = (await api("GET", "/api/account/profile")).profile;
+    try {
+      const chat = await api("GET", "/api/coach/chat?global=1");
+      const readAt = getCoachReadAt();
+      state.unreadCoach = chat.messages.filter(message =>
+        message.role === "assistant" && Number(message.created_at) > readAt
+      ).length;
+    } catch {}
     if (state.data.plan) {
       state.week = state.data.weeks[state.data.weeks.length - 1].week_no;
       state.page = "plan";
