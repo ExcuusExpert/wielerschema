@@ -1451,7 +1451,8 @@ function coachChat(plan, currentWeek) {
   const status = h("p", { class: "muted", role: "status" });
   const input = h("textarea", { id: "coach-input", rows: 2, maxlength: 1000, required: true, placeholder: "Typ een bericht…" }, state.coachDraft);
   input.addEventListener("input", () => { state.coachDraft = input.value; });
-  const submit = h("button", { class: "chat-send", type: "submit", "aria-label": "Verstuur bericht", text: "➤" });
+  let form;
+  const submit = h("button", { class: "chat-send", type: "submit", "aria-label": "Verstuur bericht", text: "➤", onclick: () => form?.requestSubmit() });
   let loadId = 0;
   let conversation = [];
   const renderMessages = (items, thinking = false) => {
@@ -1545,7 +1546,7 @@ function coachChat(plan, currentWeek) {
       if (requestId === loadId) status.textContent = "";
     }
   };
-  const form = h("form", {
+  form = h("form", {
     class: "stack coach-chat-form",
     onsubmit: async event => {
       event.preventDefault();
@@ -1576,7 +1577,7 @@ function coachChat(plan, currentWeek) {
         submit.disabled = false;
         submit.textContent = "➤";
         renderMessages(conversation);
-        status.textContent = "";
+        status.textContent = "Bericht niet verzonden. Controleer je verbinding en probeer opnieuw.";
       }
     }
   },
@@ -1857,3 +1858,7 @@ async function start() {
 }
 
 start();
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}

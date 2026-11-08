@@ -1,0 +1,19 @@
+{
+  "name": "WielerSchema",
+  "short_name": "WielerSchema",
+  "description": "Je persoonlijke wielerschema en AI-coach.",
+  "lang": "nl",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f7f5",
+  "theme_color": "#587d3e",
+  "icons": [
+    {
+      "src": "/pwa-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
