@@ -578,17 +578,60 @@ function viewIntake(prefill) {
 function viewActivities() {
   state.page = "activities";
   renderNav("activities");
+  const file = h("input", { type: "file", accept: ".fit,application/octet-stream", id: "fit-upload" });
+  const status = h("p", { class: "integration-status", role: "status" });
+  const list = h("div", { class: "activity-list stack" });
+  const uploadFit = async event => {
+    event.preventDefault();
+    const selected = file.files && file.files[0];
+    if (!selected) { status.textContent = "Kies eerst een FIT-bestand."; return; }
+    status.textContent = "FIT-bestand verwerken…";
+    try {
+      const body = new FormData();
+      body.append("file", selected, selected.name);
+      const response = await fetch("/api/activities/import", { method: "POST", credentials: "same-origin", body });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || "Het FIT-bestand kon niet worden geïmporteerd.");
+      file.value = "";
+      status.textContent = "Activiteit geïmporteerd.";
+      await loadActivities();
+    } catch (error) { status.textContent = error.message; }
+  };
+  const renderActivities = activities => {
+    clear(list);
+    if (!activities.length) {
+      list.appendChild(h("p", { class: "muted", text: "Nog geen activiteiten geïmporteerd." }));
+      return;
+    }
+    for (const activity of activities) {
+      const duration = Number(activity.elapsed_time);
+      const distance = Number(activity.distance);
+      list.appendChild(h("article", { class: "card activity-item" },
+        h("div", { class: "activity-item-heading" },
+          h("h2", { text: activity.name || "Training" }),
+          h("time", { class: "muted", datetime: activity.start_date_local || activity.date, text: String(activity.start_date_local || activity.date || "").slice(0, 10) })),
+        h("p", { class: "muted", text: [Number.isFinite(duration) && duration > 0 ? minutesText(Math.round(duration / 60)) : "", Number.isFinite(distance) && distance > 0 ? `${(distance / 1000).toFixed(1)} km` : "", activity.average_heartrate ? `${Math.round(activity.average_heartrate)} bpm gemiddeld` : "", activity.average_watts ? `${Math.round(activity.average_watts)} W gemiddeld` : ""].filter(Boolean).join(" · ") || "Geen meetgegevens beschikbaar." }))
+      ));
+    }
+  };
+  const loadActivities = async () => {
+    try { renderActivities((await api("GET", "/api/activities")).activities || []); }
+    catch (error) { status.textContent = error.message; }
+  };
+  const importForm = h("form", { class: "card stack", onsubmit: uploadFit },
+    h("h2", { text: "FIT-bestand importeren" }),
+    h("p", { class: "muted", text: "Upload een training uit je fietscomputer of sportapp. Het bestand blijft aan jouw account gekoppeld." }),
+    field("FIT-bestand", file, "Maximaal 10 MB."), status,
+    h("button", { class: "btn", type: "submit", text: "Activiteit importeren" }));
   show(
     h("div", { class: "page-heading" },
       h("p", { class: "eyebrow", text: "JOUW TRAININGEN" }),
       h("h1", { text: "Activiteiten" }),
-      h("p", { class: "muted", text: "Je trainingen verschijnen hier zodra een officiële activiteitkoppeling beschikbaar is." })),
-    h("section", { class: "card stack activity-empty" },
-      h("span", { class: "activity-empty-icon", "aria-hidden": "true", text: "↗" }),
-      h("h2", { text: "Nog geen activiteiten gekoppeld" }),
-      h("p", { class: "muted", text: "Bekijk de status en plannen voor automatische synchronisatie op de pagina Koppelingen." }),
-      h("button", { class: "btn", type: "button", text: "Bekijk koppelingen", onclick: viewConnections }))
+      h("p", { class: "muted", text: "Importeer trainingen rechtstreeks uit een FIT-bestand of gebruik een automatische koppeling." })),
+    importForm,
+    h("section", { class: "stack" }, h("h2", { text: "Recente activiteiten" }), list)
   );
+  loadActivities();
 }
 
 function viewConnections() {

@@ -301,7 +301,7 @@ ok(sandbox.copiedText.includes("Duration: 70 minuten") &&
   "TrainingPeaks AI-prompt gebruikt de bijgewerkte handmatige training en exacte blokken zonder RPE");
 
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Activiteiten")[0].click();
-ok(text().includes("Nog geen activiteiten gekoppeld") && !text().includes("TrainingPeaks"), "activiteiten-tab toont status zonder importfunctie");
+ok(text().includes("FIT-bestand importeren") && text().includes("Nog geen activiteiten geïmporteerd") && !text().includes("TrainingPeaks"), "activiteiten-tab toont FIT-import en lege toestand");
 ok(!text().includes("Strava") && !text().includes("strava"), "Strava is uit de activiteitenpagina verwijderd");
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Koppelingen")[0].click();
 ok(text().includes("Koppelingen") && text().includes("GARMIN CONNECT") && text().includes("WAHOO") &&

@@ -15,6 +15,7 @@ const REGISTER_PER_IP_PER_DAY = 10;
 const LOGIN_PER_IP_PER_DAY = 40;
 const LOGIN_PER_USER_PER_HOUR = 10;
 const MAX_BODY_CHARS = 20000;
+const MAX_FIT_BYTES = 10 * 1024 * 1024;
 const GROQ_TIMEOUT_MS = 40000;
 const MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
 
@@ -603,6 +604,122 @@ async function readJson(request) {
   try { const v = JSON.parse(text); return v && typeof v === "object" ? v : {}; } catch { return { error: "ongeldig" }; }
 }
 
+function fitValue(view, offset, size, baseType, littleEndian) {
+  if (offset + size > view.byteLength) return null;
+  if (baseType === 0x02 || baseType === 0x00 || baseType === 0x0a) return size === 1 ? view.getUint8(offset) : null;
+  if (baseType === 0x83) return size === 2 ? view.getInt16(offset, littleEndian) : null;
+  if (baseType === 0x84 || baseType === 0x8b) return size === 2 ? view.getUint16(offset, littleEndian) : null;
+  if (baseType === 0x85) return size === 4 ? view.getInt32(offset, littleEndian) : null;
+  if (baseType === 0x86 || baseType === 0x8c) return size === 4 ? view.getUint32(offset, littleEndian) : null;
+  if (baseType === 0x88) return size === 4 ? view.getFloat32(offset, littleEndian) : null;
+  if (baseType === 0x89) return size === 8 ? view.getFloat64(offset, littleEndian) : null;
+  return null;
+}
+
+function fitTimestamp(value) {
+  if (!Number.isFinite(value) || value === 0xffffffff) return null;
+  return new Date(Date.UTC(1989, 0, 1) + value * 1000).toISOString();
+}
+
+function parseFit(bytes) {
+  if (bytes.length < 14 || String.fromCharCode(...bytes.slice(8, 12)) !== ".FIT") throw new Error("Dit is geen geldig FIT-bestand.");
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const headerSize = view.getUint8(0);
+  const dataSize = view.getUint32(4, true);
+  if (![12, 14].includes(headerSize) || headerSize + dataSize > bytes.length) throw new Error("Het FIT-bestand is onvolledig.");
+  const definitions = new Map();
+  const records = [];
+  let session = null;
+  let lastTimestamp = null;
+  let offset = headerSize;
+  const end = headerSize + dataSize;
+  while (offset < end) {
+    const header = view.getUint8(offset++);
+    const compressed = Boolean(header & 0x80);
+    const local = compressed ? (header >> 5) & 3 : header & 0x0f;
+    if (header & 0x40) {
+      if (offset + 5 > end) throw new Error("Ongeldige FIT-definitie.");
+      const littleEndian = view.getUint8(offset++) === 0;
+      const global = view.getUint16(offset, littleEndian); offset += 2;
+      const fieldCount = view.getUint8(offset++);
+      const fields = [];
+      for (let i = 0; i < fieldCount; i++) {
+        if (offset + 3 > end) throw new Error("Ongeldige FIT-velden.");
+        fields.push({ number: view.getUint8(offset++), size: view.getUint8(offset++), baseType: view.getUint8(offset++) & 0x1f });
+      }
+      const developerCount = view.getUint8(offset++);
+      offset += developerCount * 3;
+      if (offset > end) throw new Error("Ongeldige FIT-definitie.");
+      definitions.set(local, { global, fields, littleEndian });
+      continue;
+    }
+    const definition = definitions.get(local);
+    if (!definition) throw new Error("FIT-record verwijst naar een onbekende definitie.");
+    const values = {};
+    for (const field of definition.fields) {
+      const value = fitValue(view, offset, field.size, field.baseType, definition.littleEndian);
+      if (value !== null) values[field.number] = value;
+      offset += field.size;
+    }
+    if (compressed && lastTimestamp !== null) {
+      let timestamp = (lastTimestamp & ~0x1f) | (header & 0x1f);
+      if (timestamp <= lastTimestamp) timestamp += 0x20;
+      values[253] = timestamp;
+    }
+    if (values[253] !== undefined && values[253] !== 0xffffffff) lastTimestamp = values[253];
+    if (definition.global === 20) records.push(values);
+    if (definition.global === 18) session = values;
+  }
+  if (!records.length && !session) throw new Error("Dit FIT-bestand bevat geen training.");
+  const first = records[0] || {};
+  const last = records[records.length - 1] || {};
+  const start = fitTimestamp(session?.[2] ?? first[253]);
+  const activity = {
+    source: "fit",
+    name: "Geïmporteerde training",
+    start_date_local: start,
+    elapsed_time: session?.[7] != null ? Math.round(session[7] / 1000) : (start && fitTimestamp(last[253]) ? Math.max(0, Math.round((Date.parse(fitTimestamp(last[253])) - Date.parse(start)) / 1000)) : null),
+    distance: session?.[9] != null ? session[9] / 100 : null,
+    total_elevation_gain: session?.[22] ?? null,
+    average_speed: session?.[14] != null ? session[14] / 1000 : null,
+    max_speed: session?.[15] != null ? session[15] / 1000 : null,
+    average_heartrate: session?.[16] ?? null,
+    max_heartrate: session?.[17] ?? null,
+    average_watts: session?.[20] ?? null,
+    max_watts: session?.[21] ?? null
+  };
+  if (!activity.start_date_local) throw new Error("Er staat geen datum in dit FIT-bestand.");
+  return activity;
+}
+
+async function listActivities(env, user) {
+  const rows = (await env.DB.prepare(
+    "SELECT activity_id, activity_date, data FROM intervals_activities WHERE user_id = ? ORDER BY activity_date DESC, updated_at DESC LIMIT 100"
+  ).bind(user.id).all()).results || [];
+  return json({ activities: rows.map(row => ({ id: row.activity_id, date: row.activity_date, ...JSON.parse(row.data) })) });
+}
+
+async function importFit(request, env, user) {
+  const contentLength = Number(request.headers.get("Content-Length") || 0);
+  if (contentLength > MAX_FIT_BYTES + 100000) return json({ error: "too_large", message: "Dit FIT-bestand is groter dan 10 MB." }, 413);
+  const form = await request.formData().catch(() => null);
+  const file = form?.get("file");
+  if (!file || typeof file.arrayBuffer !== "function") return json({ error: "missing_file", message: "Kies een FIT-bestand." }, 400);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes.length > MAX_FIT_BYTES) return json({ error: "too_large", message: "Dit FIT-bestand is groter dan 10 MB." }, 413);
+  let activity;
+  try { activity = parseFit(bytes); }
+  catch (error) { return json({ error: "invalid_fit", message: error.message || "Dit FIT-bestand kan niet worden gelezen." }, 400); }
+  const id = `fit:${await toHex(await crypto.subtle.digest("SHA-256", bytes))}`;
+  const now = Date.now();
+  await env.DB.prepare(
+    `INSERT INTO intervals_activities (user_id, activity_id, activity_date, data, updated_at)
+     VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, activity_id) DO UPDATE SET
+     activity_date=excluded.activity_date, data=excluded.data, updated_at=excluded.updated_at`
+  ).bind(user.id, id, activity.start_date_local.slice(0, 10), JSON.stringify(activity), now).run();
+  return json({ ok: true, activity: { id, date: activity.start_date_local.slice(0, 10), ...activity } });
+}
+
 async function handleApi(request, env, url) {
   await ensureSchema(env);
   const path = url.pathname;
@@ -631,6 +748,8 @@ async function handleApi(request, env, url) {
   if (path === "/api/intervals/connect" && method === "GET") return intervalsConnect(env, user, request);
   if (path === "/api/intervals/sync" && method === "POST") return intervalsSync(request, env, user);
   if (path === "/api/intervals/disconnect" && method === "POST") return intervalsDisconnect(env, user);
+  if (path === "/api/activities" && method === "GET") return listActivities(env, user);
+  if (path === "/api/activities/import" && method === "POST") return importFit(request, env, user);
   if (path === "/api/account/profile" && method === "GET") return getAccountProfile(env, user);
   if (path === "/api/account/profile" && method === "POST") return saveAccountProfile(request, env, user);
   if (path === "/api/account/credentials" && method === "POST") return updateCredentials(request, env, user);
@@ -903,7 +1022,7 @@ async function intervalsDisconnect(env, user) {
   }
   await env.DB.batch([
     env.DB.prepare("DELETE FROM intervals_connections WHERE user_id = ?").bind(user.id),
-    env.DB.prepare("DELETE FROM intervals_activities WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM intervals_activities WHERE user_id = ? AND activity_id NOT LIKE 'fit:%'").bind(user.id),
     env.DB.prepare("DELETE FROM intervals_wellness WHERE user_id = ?").bind(user.id)
   ]);
   return json({ ok: true });

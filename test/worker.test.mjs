@@ -157,6 +157,21 @@ test("registreren: cookie, beveiligde vlaggen en wachtwoord niet leesbaar opgesl
   assert.equal(me.data.username, "hessel");
 });
 
+test("FIT-import vereist een geldig FIT-bestand en blijft per gebruiker afgeschermd", async () => {
+  const env = makeEnv();
+  const cookie = await signup(env, "fitgebruiker");
+  const invalid = new FormData();
+  invalid.append("file", new Blob(["geen fit"]), "training.fit");
+  const response = await worker.fetch(new Request(BASE + "/api/activities/import", {
+    method: "POST", headers: { Cookie: cookie, Origin: BASE }, body: invalid
+  }), env);
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error, "invalid_fit");
+  const activities = await api(env, "GET", "/api/activities", undefined, { cookie });
+  assert.deepEqual(activities.data.activities, []);
+  assert.equal((await api(env, "GET", "/api/activities")).status, 401);
+});
+
 test("registreren: zwak wachtwoord, geen toestemming, dubbele naam", async () => {
   const env = makeEnv();
   assert.equal((await api(env, "POST", "/api/register", { username: "abc", password: "kort", consent: true })).status, 400);
