@@ -118,6 +118,13 @@ function dutchDate(iso) {
   return /^\d{4}-\d{2}-\d{2}$/.test(iso || "") ? `${iso.slice(8, 10)}-${iso.slice(5, 7)}-${iso.slice(0, 4)}` : "";
 }
 
+function activityDateLabel(value) {
+  const date = new Date(value || "");
+  return Number.isNaN(date.getTime()) ? "Onbekende datum" : date.toLocaleDateString("nl-NL", {
+    weekday: "short", day: "numeric", month: "short", year: "numeric"
+  });
+}
+
 function birthDateInput(iso) {
   const input = h("input", {
     type: "text", name: "geboortedatum", inputmode: "numeric", autocomplete: "bday",
@@ -650,8 +657,7 @@ function viewActivities() {
           h("canvas", { class: "activity-map", width: 720, height: 300, "aria-label": "Kaart van je fietsroute" }))
         : null;
       if (routeMap) setTimeout(() => drawRouteMap(routeMap.children[1], routePoints), 0);
-      const details = h("div", { class: "activity-details stack" },
-        h("p", { class: "muted", text: [
+      const detailMetrics = [
           activity.average_heartrate ? `gem. ${Math.round(activity.average_heartrate)} bpm` : "",
           activity.max_heartrate ? `max ${Math.round(activity.max_heartrate)} bpm` : "",
           activity.average_watts ? `gem. ${Math.round(activity.average_watts)} W` : "",
@@ -659,7 +665,9 @@ function viewActivities() {
           activity.total_elevation_gain ? `${Math.round(activity.total_elevation_gain)} m klimmen` : "",
           activity.average_speed ? `${(Number(activity.average_speed) * 3.6).toFixed(1)} km/u gemiddeld` : "",
           activity.max_speed ? `max ${(Number(activity.max_speed) * 3.6).toFixed(1)} km/u` : ""
-        ] }),
+        ].filter(Boolean).join(" · ");
+      const details = h("div", { class: "activity-details stack" },
+        detailMetrics ? h("p", { class: "muted", text: detailMetrics }) : null,
         routeMap,
         charts.length ? charts : h("p", { class: "hint", text: "Geen detailmetingen beschikbaar in dit bestand." })
       );
@@ -678,7 +686,7 @@ function viewActivities() {
       details.hidden = true;
       const heading = h("div", { class: "activity-item-heading" },
         h("h2", { text: activity.name || "Training" }),
-        h("time", { class: "muted", datetime: activity.start_date_local || activity.date, text: String(activity.start_date_local || activity.date || "").slice(0, 10) }));
+        h("time", { class: "muted", datetime: activity.start_date_local || activity.date, text: activityDateLabel(activity.start_date_local || activity.date) }));
       const editName = h("input", { type: "text", maxlength: 100, value: activity.name || "Training", hidden: true });
       const saveName = h("button", { class: "btn small", type: "button", text: "Opslaan", hidden: true, onclick: async () => {
         try {
@@ -696,12 +704,23 @@ function viewActivities() {
         if (!window.confirm("Deze activiteit verwijderen?")) return;
         try {
           await api("DELETE", `/api/activities/${encodeURIComponent(activity.id)}`);
+          status.textContent = "Activiteit verwijderd.";
           await loadActivities();
         } catch (error) { status.textContent = error.message; }
       }});
+      deleteButton.textContent = "🗑";
+      deleteButton.setAttribute("aria-label", `Verwijder ${activity.name || "deze activiteit"}`);
+      deleteButton.setAttribute("title", "Activiteit verwijderen");
+      deleteButton.className = "activity-delete";
+      const summaryMetrics = [
+        Number.isFinite(duration) && duration > 0 ? minutesText(Math.round(duration / 60)) : "",
+        Number.isFinite(distance) && distance > 0 ? `${(distance / 1000).toFixed(1)} km` : "",
+        activity.average_heartrate ? `${Math.round(activity.average_heartrate)} bpm gemiddeld` : "",
+        activity.average_watts ? `${Math.round(activity.average_watts)} W gemiddeld` : ""
+      ].filter(Boolean);
       list.appendChild(h("article", { class: "card activity-item" },
         heading, editName, saveName,
-        h("p", { class: "muted", text: [Number.isFinite(duration) && duration > 0 ? minutesText(Math.round(duration / 60)) : "", Number.isFinite(distance) && distance > 0 ? `${(distance / 1000).toFixed(1)} km` : "", activity.average_heartrate ? `${Math.round(activity.average_heartrate)} bpm gemiddeld` : "", activity.average_watts ? `${Math.round(activity.average_watts)} W gemiddeld` : "" ]}),
+        h("div", { class: "activity-metrics", "aria-label": "Kerngegevens", text: summaryMetrics.join(" · ") }),
         h("div", { class: "activity-actions" }, editNameButton, deleteButton),
         toggleDetails, details
       ));
