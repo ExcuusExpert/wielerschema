@@ -1698,6 +1698,21 @@ function viewAccount() {
   const deleteError = h("p", { class: "error", role: "alert" });
   const deletePassword = h("input", { type: "password", autocomplete: "current-password", required: true });
   const deleteSubmit = h("button", { class: "btn danger", type: "submit", text: "Account en gegevens verwijderen" });
+  const chatDeleteStatus = h("p", { class: "muted", role: "status" });
+  const chatDeleteButton = h("button", { class: "btn ghost", type: "button", text: "Chatberichten verwijderen", onclick: async () => {
+    if (!confirm("Alle chatberichten van je coach verwijderen? Je profiel en schema blijven behouden.")) return;
+    chatDeleteButton.disabled = true;
+    chatDeleteStatus.textContent = "Chatberichten verwijderen…";
+    try {
+      await api("DELETE", "/api/account/chat");
+      state.unreadCoach = 0;
+      markCoachRead();
+      chatDeleteStatus.textContent = "Alle chatberichten zijn verwijderd.";
+    } catch (error) {
+      chatDeleteStatus.textContent = error.message;
+      chatDeleteButton.disabled = false;
+    }
+  }});
   const loggedInName = h("strong", { text: state.user });
   show(
     h("h1", { text: "Account" }),
@@ -1776,6 +1791,10 @@ function viewAccount() {
     h("h2", { text: "Account verwijderen" }),
     h("p", { class: "muted", text: "Dit verwijdert je account, schema en chat. Dat kan niet ongedaan worden gemaakt." }),
     field("Wachtwoord ter bevestiging", deletePassword), deleteError, deleteSubmit)
+    , h("section", { class: "card stack" },
+      h("h2", { text: "Coachgesprekken" }),
+      h("p", { class: "muted", text: "Verwijder je opgeslagen chatberichten met de coach. Je trainingsschema blijft staan." }),
+      chatDeleteButton, chatDeleteStatus)
   );
 }
 

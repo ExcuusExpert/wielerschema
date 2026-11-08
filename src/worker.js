@@ -868,6 +868,7 @@ async function handleApi(request, env, url) {
   if (path === "/api/plan/checkin" && method === "POST") return checkin(request, env, user);
   if (path === "/api/plan/workout" && method === "POST") return updateWorkout(request, env, user);
   if (path === "/api/account/export" && method === "GET") return exportAccount(env, user);
+  if (path === "/api/account/chat" && method === "DELETE") return deleteCoachMessages(env, user);
   if (path === "/api/account/delete" && method === "POST") return deleteAccount(request, env, user);
   return json({ error: "not_found" }, 404);
 }
@@ -1861,6 +1862,14 @@ async function deleteAccount(request, env, user) {
     env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id)
   ]);
   log("account_deleted");
+
+async function deleteCoachMessages(env, user) {
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM coach_suggestions WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM coach_messages WHERE user_id = ?").bind(user.id)
+  ]);
+  return json({ ok: true });
+}
   return json({ ok: true }, 200, { "Set-Cookie": sessionCookie("", 0) });
 }
 
