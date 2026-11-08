@@ -696,6 +696,8 @@ function parseFit(bytes) {
     .filter(record => record[253] !== undefined)
     .map(record => ({
       time: fitTimestamp(record[253]),
+      latitude: record[0] != null ? record[0] * 180 / 0x80000000 : null,
+      longitude: record[1] != null ? record[1] * 180 / 0x80000000 : null,
       distance: record[5] != null ? record[5] / 100 : null,
       speed: record[6] != null ? record[6] / 1000 : null,
       heartrate: record[3] ?? null,
@@ -731,6 +733,29 @@ async function listActivities(env, user) {
   return json({ activities: rows.map(row => ({ id: row.activity_id, date: row.activity_date, ...JSON.parse(row.data) })) });
 }
 
+async function updateActivity(request, env, user, activityId) {
+  const body = await readJson(request);
+  const name = String(body.name || "").trim().slice(0, 100);
+  if (!name) return json({ error: "invalid_name", message: "Vul een naam in." }, 400);
+  const row = await env.DB.prepare("SELECT data FROM intervals_activities WHERE user_id = ? AND activity_id = ?")
+    .bind(user.id, activityId).first();
+  if (!row) return json({ error: "not_found", message: "Activiteit niet gevonden." }, 404);
+  const activity = JSON.parse(row.data);
+  activity.name = name;
+  await env.DB.prepare("UPDATE intervals_activities SET data = ?, updated_at = ? WHERE user_id = ? AND activity_id = ?")
+    .bind(JSON.stringify(activity), Date.now(), user.id, activityId).run();
+  return json({ ok: true, activity: { id: activityId, ...activity } });
+}
+
+async function deleteActivity(env, user, activityId) {
+  const row = await env.DB.prepare("SELECT 1 FROM intervals_activities WHERE user_id = ? AND activity_id = ?")
+    .bind(user.id, activityId).first();
+  if (!row) return json({ error: "not_found", message: "Activiteit niet gevonden." }, 404);
+  await env.DB.prepare("DELETE FROM intervals_activities WHERE user_id = ? AND activity_id = ?")
+    .bind(user.id, activityId).run();
+  return json({ ok: true });
+}
+
 async function importFit(request, env, user) {
   const contentLength = Number(request.headers.get("Content-Length") || 0);
   if (contentLength > MAX_FIT_BYTES + 100000) return json({ error: "too_large", message: "Dit FIT-bestand is groter dan 10 MB." }, 413);
@@ -759,12 +784,18 @@ async function importFit(request, env, user) {
     const offset = Math.max(0, Math.min(plan.total_weeks * 7 - 1, daysBetween(plan.start_date, activity.start_date_local.slice(0, 10))));
     const weekNo = Math.floor(offset / 7) + 1;
     const dayNo = offset % 7;
-    coach_feedback = `Goed gedaan met je training! Je reed ${activity.elapsed_time ? `${Math.round(activity.elapsed_time / 60)} minuten` : "een mooie rit"}`;
-    if (activity.distance != null) coach_feedback += ` en ${Math.round(activity.distance / 100) / 10} km`;
-    if (activity.average_heartrate != null) coach_feedback += `. Je gemiddelde hartslag was ${Math.round(activity.average_heartrate)} bpm`;
+    const distanceText = activity.distance != null ? `${(activity.distance / 1000).toFixed(1)} km` : "een mooie afstand";
+    const feedback = [
+      `Sterke rit vandaag! Je hebt ${distanceText} weggewerkt`,
+      `Mooi doorgetrapt! Deze training was ${distanceText}`,
+      `Lekker bezig: ${distanceText} op de teller`
+    ][Math.floor((activity.distance || now) / 1000) % 3];
+    coach_feedback = `${feedback}${activity.elapsed_time ? ` in ${Math.round(activity.elapsed_time / 60)} minuten` : ""}.`;
+    if (activity.average_heartrate != null) coach_feedback += ` Je gemiddelde hartslag was ${Math.round(activity.average_heartrate)} bpm`;
     if (activity.max_heartrate != null) coach_feedback += ` en je maximale hartslag ${Math.round(activity.max_heartrate)} bpm`;
     if (activity.average_watts != null) coach_feedback += `. Gemiddeld trapte je ${Math.round(activity.average_watts)} watt`;
-    coach_feedback += ". Lekker kopwerk — blijf zo stoempen!";
+    const closing = ["Dat is mooi kopwerk — houd dit vast!", "Je elastiek bleef vandaag mooi strak.", "Zo bouw je stap voor stap koersbenen op."][Math.floor(now / 1000) % 3];
+    coach_feedback += ` ${closing}`;
     await env.DB.prepare(
       "INSERT INTO coach_messages (id, user_id, week_no, day_no, role, content, updated, created_at) VALUES (?, ?, ?, ?, 'assistant', ?, 0, ?)"
     ).bind(randomHex(12), user.id, weekNo, dayNo, coach_feedback, now + 1).run();
@@ -802,6 +833,8 @@ async function handleApi(request, env, url) {
   if (path === "/api/intervals/disconnect" && method === "POST") return intervalsDisconnect(env, user);
   if (path === "/api/activities" && method === "GET") return listActivities(env, user);
   if (path === "/api/activities/import" && method === "POST") return importFit(request, env, user);
+  if (path.startsWith("/api/activities/") && method === "PATCH") return updateActivity(request, env, user, decodeURIComponent(path.slice("/api/activities/".length)));
+  if (path.startsWith("/api/activities/") && method === "DELETE") return deleteActivity(env, user, decodeURIComponent(path.slice("/api/activities/".length)));
   if (path === "/api/account/profile" && method === "GET") return getAccountProfile(env, user);
   if (path === "/api/account/profile" && method === "POST") return saveAccountProfile(request, env, user);
   if (path === "/api/account/credentials" && method === "POST") return updateCredentials(request, env, user);

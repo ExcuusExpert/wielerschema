@@ -642,6 +642,14 @@ function viewActivities() {
         setTimeout(() => drawActivityChart(canvas, activity.samples, key, label, unit, color), 0);
         return [h("div", { class: "activity-chart-block" }, h("h3", { text: label }), canvas)];
       });
+      const routePoints = (activity.samples || []).filter(sample =>
+        Number.isFinite(Number(sample.latitude)) && Number.isFinite(Number(sample.longitude)));
+      const routeMap = routePoints.length > 1
+        ? h("div", { class: "activity-chart-block" },
+          h("h3", { text: "Routekaart" }),
+          h("canvas", { class: "activity-map", width: 720, height: 300, "aria-label": "Kaart van je fietsroute" }))
+        : null;
+      if (routeMap) setTimeout(() => drawRouteMap(routeMap.children[1], routePoints), 0);
       const details = h("div", { class: "activity-details stack" },
         h("p", { class: "muted", text: [
           activity.average_heartrate ? `gem. ${Math.round(activity.average_heartrate)} bpm` : "",
@@ -652,6 +660,7 @@ function viewActivities() {
           activity.average_speed ? `${(Number(activity.average_speed) * 3.6).toFixed(1)} km/u gemiddeld` : "",
           activity.max_speed ? `max ${(Number(activity.max_speed) * 3.6).toFixed(1)} km/u` : ""
         ] }),
+        routeMap,
         charts.length ? charts : h("p", { class: "hint", text: "Geen detailmetingen beschikbaar in dit bestand." })
       );
       const toggleDetails = h("button", { class: "btn ghost small activity-toggle", type: "button", "aria-expanded": "false", text: "Meer details", onclick: () => {
@@ -667,11 +676,33 @@ function viewActivities() {
         }
       }});
       details.hidden = true;
+      const heading = h("div", { class: "activity-item-heading" },
+        h("h2", { text: activity.name || "Training" }),
+        h("time", { class: "muted", datetime: activity.start_date_local || activity.date, text: String(activity.start_date_local || activity.date || "").slice(0, 10) }));
+      const editName = h("input", { type: "text", maxlength: 100, value: activity.name || "Training", hidden: true });
+      const saveName = h("button", { class: "btn small", type: "button", text: "Opslaan", hidden: true, onclick: async () => {
+        try {
+          await api("PATCH", `/api/activities/${encodeURIComponent(activity.id)}`, { name: editName.value });
+          await loadActivities();
+        } catch (error) { status.textContent = error.message; }
+      }});
+      const editNameButton = h("button", { class: "btn ghost small", type: "button", text: "Naam wijzigen", onclick: () => {
+        editName.hidden = false;
+        saveName.hidden = false;
+        editNameButton.hidden = true;
+        editName.focus();
+      }});
+      const deleteButton = h("button", { class: "btn ghost small danger-button", type: "button", text: "Verwijderen", onclick: async () => {
+        if (!window.confirm("Deze activiteit verwijderen?")) return;
+        try {
+          await api("DELETE", `/api/activities/${encodeURIComponent(activity.id)}`);
+          await loadActivities();
+        } catch (error) { status.textContent = error.message; }
+      }});
       list.appendChild(h("article", { class: "card activity-item" },
-        h("div", { class: "activity-item-heading" },
-          h("h2", { text: activity.name || "Training" }),
-          h("time", { class: "muted", datetime: activity.start_date_local || activity.date, text: String(activity.start_date_local || activity.date || "").slice(0, 10) })),
+        heading, editName, saveName,
         h("p", { class: "muted", text: [Number.isFinite(duration) && duration > 0 ? minutesText(Math.round(duration / 60)) : "", Number.isFinite(distance) && distance > 0 ? `${(distance / 1000).toFixed(1)} km` : "", activity.average_heartrate ? `${Math.round(activity.average_heartrate)} bpm gemiddeld` : "", activity.average_watts ? `${Math.round(activity.average_watts)} W gemiddeld` : "" ]}),
+        h("div", { class: "activity-actions" }, editNameButton, deleteButton),
         toggleDetails, details
       ));
     }
@@ -704,6 +735,36 @@ function viewActivities() {
     const format = value => key === "speed" ? `${(value * 3.6).toFixed(1)} ${unit}` : `${Math.round(value)} ${unit}`;
     context.fillText(`${label}: ${format(max)}`, 8, 16);
     context.fillText(format(min), 8, height - 4);
+  }
+  function drawRouteMap(canvas, points) {
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    const padding = 28;
+    const minLat = Math.min(...points.map(point => Number(point.latitude)));
+    const maxLat = Math.max(...points.map(point => Number(point.latitude)));
+    const minLon = Math.min(...points.map(point => Number(point.longitude)));
+    const maxLon = Math.max(...points.map(point => Number(point.longitude)));
+    const scale = Math.max(maxLat - minLat, (maxLon - minLon) * Math.cos((minLat + maxLat) / 2 * Math.PI / 180), 0.00001);
+    const point = sample => ({
+      x: padding + ((Number(sample.longitude) - minLon) / scale) * (canvas.width - padding * 2),
+      y: canvas.height - padding - ((Number(sample.latitude) - minLat) / scale) * (canvas.height - padding * 2)
+    });
+    context.fillStyle = "#eef4eb";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.strokeStyle = "#587d3e";
+    context.lineWidth = 4;
+    context.beginPath();
+    points.forEach((sample, index) => {
+      const position = point(sample);
+      index ? context.lineTo(position.x, position.y) : context.moveTo(position.x, position.y);
+    });
+    context.stroke();
+    const start = point(points[0]);
+    const finish = point(points[points.length - 1]);
+    context.fillStyle = "#3e6530";
+    context.fillRect(start.x - 5, start.y - 5, 10, 10);
+    context.fillStyle = "#b6534a";
+    context.fillRect(finish.x - 5, finish.y - 5, 10, 10);
   }
   const loadActivities = async () => {
     try { renderActivities((await api("GET", "/api/activities")).activities || []); }
