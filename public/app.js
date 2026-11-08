@@ -636,7 +636,8 @@ function viewActivities() {
         ["speed", "Snelheid", "km/u", "#3f7194"],
         ["altitude", "Hoogte", "m", "#8a6b3f"]
       ].flatMap(([key, label, unit, color]) => {
-        if (!activity.samples?.some(sample => Number.isFinite(Number(sample[key])))) return [];
+        const values = (activity.samples || []).map(sample => Number(sample[key])).filter(Number.isFinite);
+        if (values.length < 2 || Math.max(...values) - Math.min(...values) < 0.0001) return [];
         const canvas = h("canvas", { class: "activity-chart", width: 720, height: 180, "aria-label": `${label}grafiek van je activiteit` });
         setTimeout(() => drawActivityChart(canvas, activity.samples, key, label, unit, color), 0);
         return [h("div", { class: "activity-chart-block" }, h("h3", { text: label }), canvas)];
@@ -653,17 +654,19 @@ function viewActivities() {
         ] }),
         charts.length ? charts : h("p", { class: "hint", text: "Geen detailmetingen beschikbaar in dit bestand." })
       );
-      const toggleDetails = h("button", { class: "btn ghost small activity-toggle", type: "button", text: "Meer details", onclick: () => {
-        const open = details.hasAttribute("hidden");
+      const toggleDetails = h("button", { class: "btn ghost small activity-toggle", type: "button", "aria-expanded": "false", text: "Meer details", onclick: () => {
+        const open = details.hidden;
         if (open) {
-          details.removeAttribute("hidden");
+          details.hidden = false;
+          toggleDetails.setAttribute("aria-expanded", "true");
           toggleDetails.textContent = "Minder details";
         } else {
-          details.setAttribute("hidden", "");
+          details.hidden = true;
+          toggleDetails.setAttribute("aria-expanded", "false");
           toggleDetails.textContent = "Meer details";
         }
       }});
-      details.setAttribute("hidden", "");
+      details.hidden = true;
       list.appendChild(h("article", { class: "card activity-item" },
         h("div", { class: "activity-item-heading" },
           h("h2", { text: activity.name || "Training" }),

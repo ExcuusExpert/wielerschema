@@ -606,15 +606,21 @@ async function readJson(request) {
 
 function fitValue(view, offset, size, baseType, littleEndian) {
   if (offset + size > view.byteLength) return null;
-  if (baseType === 0x00 || baseType === 0x02 || baseType === 0x0a) return size === 1 ? view.getUint8(offset) : null;
-  if (baseType === 0x01) return size === 1 ? view.getInt8(offset) : null;
-  if (baseType === 0x03) return size === 2 ? view.getInt16(offset, littleEndian) : null;
-  if (baseType === 0x04 || baseType === 0x0b) return size === 2 ? view.getUint16(offset, littleEndian) : null;
-  if (baseType === 0x05) return size === 4 ? view.getInt32(offset, littleEndian) : null;
-  if (baseType === 0x06 || baseType === 0x0c) return size === 4 ? view.getUint32(offset, littleEndian) : null;
-  if (baseType === 0x08) return size === 4 ? view.getFloat32(offset, littleEndian) : null;
-  if (baseType === 0x09) return size === 8 ? view.getFloat64(offset, littleEndian) : null;
-  return null;
+  let value = null;
+  if (baseType === 0x00 || baseType === 0x02 || baseType === 0x0a) value = size === 1 ? view.getUint8(offset) : null;
+  else if (baseType === 0x01) value = size === 1 ? view.getInt8(offset) : null;
+  else if (baseType === 0x03) value = size === 2 ? view.getInt16(offset, littleEndian) : null;
+  else if (baseType === 0x04 || baseType === 0x0b) value = size === 2 ? view.getUint16(offset, littleEndian) : null;
+  else if (baseType === 0x05) value = size === 4 ? view.getInt32(offset, littleEndian) : null;
+  else if (baseType === 0x06 || baseType === 0x0c) value = size === 4 ? view.getUint32(offset, littleEndian) : null;
+  else if (baseType === 0x08) value = size === 4 ? view.getFloat32(offset, littleEndian) : null;
+  else if (baseType === 0x09) value = size === 8 ? view.getFloat64(offset, littleEndian) : null;
+  const invalid = {
+    0x00: 0xff, 0x01: 0x7f, 0x02: 0xff, 0x03: 0x7fff,
+    0x04: 0xffff, 0x05: 0x7fffffff, 0x06: 0xffffffff,
+    0x0a: 0xff, 0x0b: 0xffff, 0x0c: 0xffffffff
+  };
+  return value == null || value === invalid[baseType] || (typeof value === "number" && !Number.isFinite(value)) ? null : value;
 }
 
 function fitTimestamp(value) {
