@@ -610,8 +610,8 @@ function viewActivities() {
         h("div", { class: "activity-item-heading" },
           h("h2", { text: activity.name || "Training" }),
           h("time", { class: "muted", datetime: activity.start_date_local || activity.date, text: String(activity.start_date_local || activity.date || "").slice(0, 10) })),
-        h("p", { class: "muted", text: [Number.isFinite(duration) && duration > 0 ? minutesText(Math.round(duration / 60)) : "", Number.isFinite(distance) && distance > 0 ? `${(distance / 1000).toFixed(1)} km` : "", activity.average_heartrate ? `${Math.round(activity.average_heartrate)} bpm gemiddeld` : "", activity.average_watts ? `${Math.round(activity.average_watts)} W gemiddeld` : ""].filter(Boolean).join(" · ") || "Geen meetgegevens beschikbaar." }))
-      ));
+        h("p", { class: "muted", text: [Number.isFinite(duration) && duration > 0 ? minutesText(Math.round(duration / 60)) : "", Number.isFinite(distance) && distance > 0 ? `${(distance / 1000).toFixed(1)} km` : "", activity.average_heartrate ? `${Math.round(activity.average_heartrate)} bpm gemiddeld` : "", activity.average_watts ? `${Math.round(activity.average_watts)} W gemiddeld` : "" }))
+      );
     }
   };
   const loadActivities = async () => {
