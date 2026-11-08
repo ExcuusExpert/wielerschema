@@ -17,7 +17,7 @@ const LOGIN_PER_USER_PER_HOUR = 10;
 const MAX_BODY_CHARS = 20000;
 const MAX_FIT_BYTES = 10 * 1024 * 1024;
 const GROQ_TIMEOUT_MS = 40000;
-const MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
+const MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile"];
 
 const LEVELS = ["beginner", "gevorderd", "ervaren", "wedstrijd"];
 const METER_OPTIONS = ["power", "heart_rate", "both", "none"];
@@ -528,6 +528,7 @@ function extractJson(text) {
 
 // Geeft { data } | { busy } | { failed }
 async function askGroqJson(env, user, maxTokens) {
+  if (!env.GROQ_API_KEY) return { failed: true, auth: true };
   let rateLimited = false;
   const variants = [{ reasoning: true, jsonMode: true }, { reasoning: false, jsonMode: true }, { reasoning: false, jsonMode: false }];
   for (const model of MODELS) {
@@ -542,21 +543,32 @@ async function askGroqJson(env, user, maxTokens) {
       try {
         res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
           method: "POST",
-          headers: { Authorization: `Bearer ${env.GROQ_API_KEY}`, "Content-Type": "application/json" },
+          headers: {
+            Authorization: `Bearer ${env.GROQ_API_KEY}`,
+            "Content-Type": "application/json"
+          },
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(GROQ_TIMEOUT_MS)
         });
-      } catch { break; } // timeout: volgend model
+      } catch (e) {
+        log("groq_request_error", { model, message: String(e.message || e).slice(0, 160) });
+        break;
+      } // timeout: volgend model
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         const text = data.choices?.[0]?.message?.content;
         const parsed = typeof text === "string" ? extractJson(text) : null;
         if (parsed && typeof parsed === "object") return { data: parsed };
+        log("groq_invalid_response", { model, variant: `${v.reasoning ? "reasoning" : "standard"}-${v.jsonMode ? "json" : "text"}` });
         break;
       }
       if (res.status === 429) { rateLimited = true; break; }
       if (res.status === 400) continue; // andere variant proberen
-      if (res.status === 401 || res.status === 403) return { failed: true, auth: true };
+      if (res.status === 401 || res.status === 403) {
+        log("groq_auth_error", { model, status: res.status });
+        return { failed: true, auth: true };
+      }
+      log("groq_api_error", { model, status: res.status, error: cleanText(data.error?.message, 160) });
       break;
     }
   }
@@ -577,6 +589,7 @@ async function askValidated(env, prompt, maxTokens, validate) {
 
 function aiError(r) {
   if (r.busy) return json({ error: "busy", message: "De AI is even te druk. Probeer het over een minuut opnieuw." }, 503);
+  if (r.auth) return json({ error: "ai_config", message: "De AI-dienst is niet goed geconfigureerd. Controleer de Groq API-sleutel." }, 502);
   return json({ error: "upstream", message: "Het maken van het schema is niet gelukt. Probeer het opnieuw." }, 502);
 }
 
@@ -1061,7 +1074,10 @@ async function intervalsApi(env, connection, path) {
   const activeConnection = await refreshIntervalsToken(env, connection);
   const accessToken = await decryptToken(env, activeConnection.access_token);
   const response = await fetch(`https://intervals.icu/api/v1/athlete/${encodeURIComponent(connection.athlete_id)}${path}`, {
-    headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json"
+    }
   });
   if (!response.ok) throw new Error(`Intervals.icu gaf status ${response.status}`);
   return response.json();
