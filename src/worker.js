@@ -1006,43 +1006,57 @@ async function intervalsCallback(request, env) {
   redirect.searchParams.set("intervals", failure ? "denied" : row && code ? "connected" : "error");
   if (!row || !code || failure) return Response.redirect(redirect.toString(), 302);
 
-  const tokenResponse = await fetch("https://intervals.icu/api/oauth/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: env.INTERVALS_CLIENT_ID,
-      client_secret: env.INTERVALS_CLIENT_SECRET,
-      code
-    })
-  });
-  const token = await tokenResponse.json().catch(() => ({}));
-  const athlete = token.athlete || {};
-  const athleteId = athlete.id || token.athlete_id;
-  const athleteName = athlete.name || token.athlete_name || "";
-  if (!tokenResponse.ok || !token.access_token || !athleteId) {
+  let tokenResponse;
+  try {
+    tokenResponse = await fetch("https://intervals.icu/api/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: env.INTERVALS_CLIENT_ID,
+        client_secret: env.INTERVALS_CLIENT_SECRET,
+        code
+      })
+    });
+  } catch (e) {
+    log("intervals_token_request_error", { msg: String(e.message).slice(0, 160) });
+    redirect.searchParams.set("intervals", "error");
+    return Response.redirect(redirect.toString(), 302);
+  }
+  const token = await tokenResponse.json().catch(() => null);
+  const tokenData = token && typeof token === "object" && !Array.isArray(token) ? token : {};
+  const athlete = tokenData.athlete && typeof tokenData.athlete === "object" ? tokenData.athlete : {};
+  const athleteId = athlete.id || tokenData.athlete_id;
+  const athleteName = athlete.name || tokenData.athlete_name || "";
+  if (!tokenResponse.ok || !tokenData.access_token || !athleteId) {
     log("intervals_token_error", {
       status: tokenResponse.status,
-      fields: Object.keys(token).slice(0, 10)
+      fields: Object.keys(tokenData).slice(0, 10)
     });
     redirect.searchParams.set("intervals", "error");
     return Response.redirect(redirect.toString(), 302);
   }
   const now = Date.now();
-  await env.DB.prepare(
-    `INSERT INTO intervals_connections
-      (user_id, athlete_id, athlete_name, access_token, refresh_token, expires_at, scope, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(user_id) DO UPDATE SET athlete_id=excluded.athlete_id,
-       athlete_name=excluded.athlete_name, access_token=excluded.access_token,
-       refresh_token=excluded.refresh_token, expires_at=excluded.expires_at,
-       scope=excluded.scope, updated_at=excluded.updated_at`
-  ).bind(
-    row.user_id, String(athleteId), cleanText(athleteName, 120),
-    await encryptToken(env, token.access_token),
-    token.refresh_token ? await encryptToken(env, token.refresh_token) : null,
-    token.expires_in ? now + Number(token.expires_in) * 1000 : null,
-    cleanText(token.scope || "ACTIVITY:READ,WELLNESS:READ", 300), now
-  ).run();
+  try {
+    await env.DB.prepare(
+      `INSERT INTO intervals_connections
+        (user_id, athlete_id, athlete_name, access_token, refresh_token, expires_at, scope, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET athlete_id=excluded.athlete_id,
+         athlete_name=excluded.athlete_name, access_token=excluded.access_token,
+         refresh_token=excluded.refresh_token, expires_at=excluded.expires_at,
+         scope=excluded.scope, updated_at=excluded.updated_at`
+    ).bind(
+      row.user_id, String(athleteId), cleanText(athleteName, 120),
+      await encryptToken(env, tokenData.access_token),
+      tokenData.refresh_token ? await encryptToken(env, tokenData.refresh_token) : null,
+      tokenData.expires_in ? now + Number(tokenData.expires_in) * 1000 : null,
+      cleanText(tokenData.scope || "ACTIVITY:READ,WELLNESS:READ", 300), now
+    ).run();
+  } catch (e) {
+    log("intervals_connection_error", { msg: String(e.message).slice(0, 160) });
+    redirect.searchParams.set("intervals", "error");
+    return Response.redirect(redirect.toString(), 302);
+  }
   try { await syncIntervals(env, row.user_id); }
   catch (e) { log("intervals_initial_sync_error", { msg: String(e.message).slice(0, 160) }); }
   return Response.redirect(redirect.toString(), 302);
