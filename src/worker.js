@@ -1016,7 +1016,14 @@ async function intervalsCallback(request, env) {
     })
   });
   const token = await tokenResponse.json().catch(() => ({}));
-  if (!tokenResponse.ok || !token.access_token || !token.athlete_id) {
+  const athlete = token.athlete || {};
+  const athleteId = athlete.id || token.athlete_id;
+  const athleteName = athlete.name || token.athlete_name || "";
+  if (!tokenResponse.ok || !token.access_token || !athleteId) {
+    log("intervals_token_error", {
+      status: tokenResponse.status,
+      fields: Object.keys(token).slice(0, 10)
+    });
     redirect.searchParams.set("intervals", "error");
     return Response.redirect(redirect.toString(), 302);
   }
@@ -1030,7 +1037,7 @@ async function intervalsCallback(request, env) {
        refresh_token=excluded.refresh_token, expires_at=excluded.expires_at,
        scope=excluded.scope, updated_at=excluded.updated_at`
   ).bind(
-    row.user_id, String(token.athlete_id), cleanText(token.athlete_name || "", 120),
+    row.user_id, String(athleteId), cleanText(athleteName, 120),
     await encryptToken(env, token.access_token),
     token.refresh_token ? await encryptToken(env, token.refresh_token) : null,
     token.expires_in ? now + Number(token.expires_in) * 1000 : null,
