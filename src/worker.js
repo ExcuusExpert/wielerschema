@@ -563,7 +563,10 @@ async function askGroqJson(env, user, maxTokens) {
         break;
       }
       if (res.status === 429) { rateLimited = true; break; }
-      if (res.status === 400) continue; // andere variant proberen
+      if (res.status === 400) {
+        log("groq_bad_request", { model, variant: `${v.reasoning ? "reasoning" : "standard"}-${v.jsonMode ? "json" : "text"}`, error: cleanText(data.error?.message, 200) });
+        continue; // andere variant proberen
+      }
       if (res.status === 401 || res.status === 403) {
         log("groq_auth_error", { model, status: res.status });
         return { failed: true, auth: true };
