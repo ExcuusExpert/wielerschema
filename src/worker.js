@@ -739,10 +739,10 @@ function parseFit(bytes) {
       latitude: record[0] != null ? record[0] * 180 / 0x80000000 : null,
       longitude: record[1] != null ? record[1] * 180 / 0x80000000 : null,
       distance: record[5] != null ? record[5] / 100 : null,
-      speed: record[6] != null ? record[6] / 1000 : null,
+      speed: (record[6] ?? record[73]) != null ? (record[6] ?? record[73]) / 1000 : null,
       heartrate: record[3] ?? null,
       power: record[7] ?? null,
-      altitude: record[2] != null ? record[2] / 5 - 500 : null
+      altitude: (record[2] ?? record[78]) != null ? (record[2] ?? record[78]) / 5 - 500 : null
     }))
     .filter(sample => sample.time)
     .filter((_, index, all) => index % Math.max(1, Math.ceil(all.length / 300)) === 0)
@@ -754,12 +754,13 @@ function parseFit(bytes) {
     elapsed_time: session?.[7] != null ? Math.round(session[7] / 1000) : (start && fitTimestamp(last[253]) ? Math.max(0, Math.round((Date.parse(fitTimestamp(last[253])) - Date.parse(start)) / 1000)) : null),
     distance: session?.[9] != null ? session[9] / 100 : null,
     total_elevation_gain: session?.[22] ?? null,
-    average_speed: session?.[14] != null ? session[14] / 1000 : null,
-    max_speed: session?.[15] != null ? session[15] / 1000 : null,
+    average_speed: (session?.[14] ?? session?.[124]) != null ? (session[14] ?? session[124]) / 1000 : null,
+    max_speed: (session?.[15] ?? session?.[125]) != null ? (session[15] ?? session[125]) / 1000 : null,
     average_heartrate: session?.[16] ?? null,
     max_heartrate: session?.[17] ?? null,
     average_watts: session?.[20] ?? null,
     max_watts: session?.[21] ?? null,
+    record_count: records.length,
     samples
   };
   if (!activity.start_date_local) throw new Error("Er staat geen datum in dit FIT-bestand.");

@@ -1,4 +1,4 @@
-const CACHE_NAME = "wielerschema-shell-v1";
+const CACHE_NAME = "wielerschema-shell-v2";
 const SHELL = ["/", "/index.html", "/style.css", "/app.js", "/manifest.webmanifest", "/logo.png"];
 
 self.addEventListener("install", event => {
@@ -15,7 +15,9 @@ self.addEventListener("activate", event => {
 
 self.addEventListener("fetch", event => {
   const request = event.request;
-  if (request.method !== "GET" || new URL(request.url).pathname.startsWith("/api/")) return;
+  const url = new URL(request.url);
+  // Alleen eigen bestanden: kaarttegels e.d. laat de browser zelf ophalen (anders blokkeert de CSP de fetch van de service worker)
+  if (request.method !== "GET" || url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
   event.respondWith(
     fetch(request).then(response => {
       const copy = response.clone();

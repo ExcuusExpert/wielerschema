@@ -647,7 +647,7 @@ function viewActivities() {
         ["speed", "Snelheid", "km/u", "#3f7194"],
         ["altitude", "Hoogte", "m", "#8a6b3f"]
       ].flatMap(([key, label, unit, color]) => {
-        const values = (activity.samples || []).map(sample => Number(sample[key])).filter(Number.isFinite);
+        const values = (activity.samples || []).map(sample => (sample[key] == null ? NaN : Number(sample[key]))).filter(Number.isFinite);
         if (values.length < 2 || Math.max(...values) - Math.min(...values) < 0.0001) return [];
         const canvas = h("canvas", { class: "activity-chart", width: 720, height: 180, "aria-label": `${label}grafiek van je activiteit` });
         setTimeout(() => drawActivityChart(canvas, activity.samples, key, label, unit, color), 0);
@@ -673,7 +673,9 @@ function viewActivities() {
       const details = h("div", { class: "activity-details stack" },
         detailMetrics ? h("p", { class: "muted", text: detailMetrics }) : null,
         routeMap,
-        charts.length ? charts : h("p", { class: "hint", text: "Geen detailmetingen beschikbaar in dit bestand." })
+        charts.length ? charts : h("p", { class: "hint", text: activity.record_count === 0
+          ? "Dit FIT-bestand bevat alleen een samenvatting en geen meetpunten per seconde, dus er zijn geen grafieken of route. Exporteer het bestand opnieuw uit de app of het apparaat waarmee je hebt opgenomen."
+          : "Geen detailmetingen beschikbaar in dit bestand." })
       );
       let detailsOpen = false;
       const toggleDetails = h("button", { class: "btn ghost small activity-toggle", type: "button", "aria-expanded": "false", text: "Bekijk details", onclick: () => {
@@ -753,7 +755,7 @@ function viewActivities() {
     if (!context || !samples.length) return;
     const width = canvas.width;
     const height = canvas.height;
-    const values = samples.map(sample => Number(sample[key])).filter(Number.isFinite);
+    const values = samples.map(sample => (sample[key] == null ? NaN : Number(sample[key]))).filter(Number.isFinite);
     if (!values.length) return;
     const min = Math.max(0, Math.min(...values) - 5);
     const max = Math.max(min + 10, Math.max(...values) + 5);
@@ -764,7 +766,7 @@ function viewActivities() {
     context.lineWidth = 3;
     context.beginPath();
     samples.forEach((sample, index) => {
-      const value = Number(sample[key]);
+      const value = (sample[key] == null ? NaN : Number(sample[key]));
       if (!Number.isFinite(value)) return;
       const x = index / Math.max(1, samples.length - 1) * width;
       const y = height - (value - min) / (max - min) * (height - 20) - 10;
