@@ -306,6 +306,7 @@ function renderNav(activePage = state.page) {
   const pages = [
     ["plan", "Plan", () => state.data?.plan ? viewPlan() : viewIntake()],
     ["coach", "Coach", viewCoach],
+    ["analytics", "Analyse", () => viewAnalytics()],
     ["activities", "Activiteiten", viewActivities],
     ["connections", "Koppelingen", viewConnections],
     ["account", "Account", viewAccount]
@@ -1667,6 +1668,7 @@ function viewPlan() {
     h("div", { class: "dashboard-heading" },
       h("p", { class: "eyebrow", text: "JOUW TRAININGSDASHBOARD" }),
       h("h1", { text: plan.intake.doel })),
+    raceHeader(plan, week),
     h("section", { class: "card stack" },
       h("p", { text: plan.summary }),
       h("p", { class: "muted", text: `${plan.total_weeks} weken, start ${dateLabel(plan.start_date)}. Je ziet steeds één week in detail; de volgende week maakt de coach nadat je hebt teruggemeld hoe het ging.` }),
@@ -1705,6 +1707,173 @@ function viewPlan() {
           viewIntake(plan.intake);
         } }))
   );
+}
+
+// ---------- racekop op de planpagina ----------
+function raceHeader(plan, week) {
+  const intake = plan.intake;
+  const item = plan.outline.find(o => o.week === week.week_no);
+  const daysOut = intake.datum ? dateOffset(todayIso(), intake.datum) : null;
+  const stat = (label, value, sub) => h("div", { class: "race-stat" },
+    h("span", { class: "race-stat-label", text: label }),
+    h("strong", { text: value }),
+    sub ? h("span", { class: "muted", text: sub }) : null);
+  return h("section", { class: "card race-header" },
+    h("div", { class: "row between" },
+      h("div", { class: "stack race-title" },
+        h("div", { class: "row" },
+          h("span", { class: "tag tag-accent", text: daysOut !== null && daysOut >= 0 ? "Doel" : "Schema" }),
+          item ? h("span", { class: "tag", text: FASE_LABEL[item.fase] || item.fase }) : null),
+        h("h2", { text: intake.doel }),
+        intake.datum ? h("p", { class: "muted", text: dateLabel(intake.datum) }) : null),
+      daysOut !== null && daysOut >= 0 ? h("div", { class: "race-countdown" },
+        h("strong", { text: String(daysOut) }), h("span", { text: daysOut === 1 ? "dag te gaan" : "dagen te gaan" })) : null),
+    h("div", { class: "meter", role: "progressbar", "aria-label": "Voortgang van het schema", "aria-valuemin": 0, "aria-valuemax": plan.total_weeks, "aria-valuenow": week.week_no },
+      h("span", { style: `width:${Math.round(week.week_no / plan.total_weeks * 100)}%` })),
+    h("div", { class: "race-stats" },
+      stat("Week", `${week.week_no} van ${plan.total_weeks}`, item?.focus || null),
+      stat("Fase", item ? (FASE_LABEL[item.fase] || item.fase) : "–", item ? `${item.uren} u gepland` : null),
+      stat("Nog te gaan", daysOut !== null && daysOut >= 0 ? `${(daysOut / 7).toFixed(1).replace(".", ",")} weken` : "–"),
+      stat("Trainingsdagen", `${intake.dagen.length} per week`, intake.dagen.slice().sort((a, b) => a - b).map(d => DAGEN_KORT[d]).join(" · "))));
+}
+
+// ---------- analyse ----------
+const nl = (n, digits = 0) => (n === null || n === undefined ? "–" : Number(n).toLocaleString("nl-NL", { minimumFractionDigits: digits, maximumFractionDigits: digits }));
+const signed = (n, digits = 1) => (n === null || n === undefined ? "–" : `${n > 0 ? "+" : ""}${nl(n, digits)}`);
+const hoursText = hours => { const m = Math.round(hours * 60); return `${Math.floor(m / 60)} u ${String(m % 60).padStart(2, "0")} min`; };
+function svgEl(tag, attrs, ...kids) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [key, value] of Object.entries(attrs || {})) el.setAttribute(key, String(value));
+  kids.flat().forEach(kid => kid && el.appendChild(kid));
+  return el;
+}
+function analyticsStat(label, value, sub) {
+  return h("div", { class: "stat-card" },
+    h("span", { class: "muted", text: label }), h("strong", { text: value }), h("span", { class: "muted small-text", text: sub || "" }));
+}
+function meterBar(score, tone) {
+  return h("div", { class: `meter ${tone || ""}`, role: "progressbar", "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": score },
+    h("span", { style: `width:${score}%` }));
+}
+function performanceChart(reeks) {
+  const W = 900, H = 260, pad = { l: 38, r: 12, t: 12, b: 26 };
+  const n = reeks.length;
+  const x = i => pad.l + (n > 1 ? i * (W - pad.l - pad.r) / (n - 1) : 0);
+  const maxLine = Math.max(10, ...reeks.map(p => Math.max(p.ctl || 0, p.atl || 0))) * 1.1;
+  const maxLoad = Math.max(10, ...reeks.map(p => p.load || 0)) * 2.2;
+  const plotH = H - pad.t - pad.b;
+  const yLine = v => H - pad.b - (v / maxLine) * plotH;
+  const yBar = v => H - pad.b - (v / maxLoad) * plotH;
+  const barW = Math.max(1, (W - pad.l - pad.r) / n * 0.7);
+  const path = key => reeks.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${yLine(p[key] || 0).toFixed(1)}`).join(" ");
+  const grid = [0, 0.25, 0.5, 0.75, 1].map(f => {
+    const y = H - pad.b - f * plotH;
+    return svgEl("g", null,
+      svgEl("line", { x1: pad.l, x2: W - pad.r, y1: y, y2: y, class: "chart-grid" }),
+      svgEl("text", { x: pad.l - 6, y: y + 4, class: "chart-label", "text-anchor": "end" }, document.createTextNode(String(Math.round(maxLine * f)))));
+  });
+  const labelAt = i => svgEl("text", { x: x(i), y: H - 6, class: "chart-label", "text-anchor": i === 0 ? "start" : i === n - 1 ? "end" : "middle" },
+    document.createTextNode(dateLabel(reeks[i].d)));
+  const last = reeks[n - 1];
+  return svgEl("svg", {
+    viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
+    "aria-label": `Prestatiegrafiek: fitness ${nl(last.ctl)}, vermoeidheid ${nl(last.atl)}, vorm ${signed(last.tsb, 0)}`
+  },
+    ...grid,
+    ...reeks.map((p, i) => p.load > 0 ? svgEl("rect", { x: x(i) - barW / 2, y: yBar(p.load), width: barW, height: H - pad.b - yBar(p.load), class: "chart-bar" }) : null),
+    svgEl("path", { d: path("ctl"), class: "chart-line chart-ctl" }),
+    svgEl("path", { d: path("atl"), class: "chart-line chart-atl" }),
+    labelAt(0), n > 2 ? labelAt(Math.floor((n - 1) / 2)) : null, n > 1 ? labelAt(n - 1) : null);
+}
+
+function viewAnalytics(days = 84) {
+  state.page = "analytics";
+  renderNav("analytics");
+  const body = h("div", { class: "stack" }, h("p", { class: "muted", text: "Analyse laden…" }));
+  const ranges = [[7, "1w"], [28, "4w"], [84, "12w"], [182, "6m"], [365, "1j"]];
+  show(
+    h("div", { class: "page-heading row between" },
+      h("div", null,
+        h("p", { class: "eyebrow", text: "ANALYSE" }),
+        h("h1", { text: "Training en herstel" }),
+        h("p", { class: "muted", text: "Berekend uit je activiteiten en, met een gekoppeld horloge, je nachtgegevens." })),
+      h("div", { class: "analytics-range", role: "group", "aria-label": "Periode" },
+        ...ranges.map(([value, label]) => h("button", { type: "button", class: `range-btn${value === days ? " active" : ""}`, text: label, onclick: () => viewAnalytics(value) })))),
+    body);
+  api("GET", `/api/analytics?dagen=${days}`)
+    .then(data => renderAnalytics(body, data))
+    .catch(error => { clear(body); body.appendChild(h("p", { class: "error", text: error.message })); });
+}
+
+function renderAnalytics(body, a) {
+  clear(body);
+  const k = a.kaarten;
+  const hasLoad = a.bronnen.activiteiten > 0 || k.ctl > 0;
+  const readiness = a.gereedheid, risk = a.belastingsrisico, balance = a.belastingsverhouding, night = a.nacht;
+
+  const readinessCard = h("section", { class: "card stack" },
+    h("div", { class: "row between" }, h("span", { class: "muted", text: "Gereedheid om te trainen" }),
+      readiness ? h("span", { class: "tag tag-accent", text: readiness.label }) : null),
+    readiness ? [
+      h("p", { class: "big-number" }, h("strong", { text: String(readiness.score) }), h("span", { class: "muted", text: " / 100" })),
+      meterBar(readiness.score),
+      h("div", { class: "mini-stats" },
+        h("div", null, h("span", { class: "muted", text: "HRV" }), h("strong", { text: readiness.hrv?.waarde != null ? `${nl(readiness.hrv.waarde)} ms` : "–" }), h("span", { class: "muted", text: readiness.hrv ? `${signed(readiness.hrv.verschil)} t.o.v. 14 dagen` : "geen data" })),
+        h("div", null, h("span", { class: "muted", text: "Rusthartslag" }), h("strong", { text: readiness.rhr?.waarde != null ? `${nl(readiness.rhr.waarde)} bpm` : "–" }), h("span", { class: "muted", text: readiness.rhr ? `${signed(readiness.rhr.verschil)} t.o.v. 14 dagen` : "geen data" })),
+        h("div", null, h("span", { class: "muted", text: "Slaapschuld" }), h("strong", { text: readiness.slaapschuld_uren != null ? `${nl(readiness.slaapschuld_uren, 1)} u` : "–" }), h("span", { class: "muted", text: "laatste 4 nachten" })))
+    ] : h("p", { class: "muted", text: "Nog te weinig gegevens. Importeer een rit of koppel je horloge." }));
+
+  const riskCard = h("section", { class: "card stack" },
+    h("div", { class: "row between" }, h("span", { class: "muted", text: "Belastingsrisico" }), risk ? h("span", { class: "muted", text: `${risk.score}/100` }) : null),
+    risk ? [
+      h("p", { class: "big-number" }, h("strong", { text: String(risk.score) }), h("span", { class: "muted", text: ` ${risk.label}` })),
+      meterBar(risk.score, "meter-risk"),
+      h("p", { class: "muted small-text", text: `Fitnessgroei afgelopen 7 dagen: ${signed(risk.groei_ctl_7d)}. Hoog risico betekent: bouw rustiger op of neem een lichtere dag.` })
+    ] : h("p", { class: "muted", text: "Je hebt minstens een paar weken aan ritten nodig." }));
+
+  const balanceCard = h("section", { class: "card stack" },
+    h("div", { class: "row between" }, h("span", { class: "muted", text: "Belastingsverhouding" }), balance ? h("span", { class: "tag", text: balance.label }) : null),
+    balance ? [
+      h("p", { class: "big-number" }, h("strong", { text: nl(balance.acwr, 2) }), h("span", { class: "muted", text: " ACWR" })),
+      h("p", { class: "muted small-text", text: "0,8 tot 1,3 is veilig: laatste 7 dagen tegenover de laatste 28 dagen." }),
+      h("div", { class: "mini-stats" },
+        h("div", null, h("span", { class: "muted", text: "Eentonigheid" }), h("strong", { text: nl(balance.eentonigheid, 1) })),
+        h("div", null, h("span", { class: "muted", text: "Weekspanning" }), h("strong", { text: nl(balance.spanning) })))
+    ] : h("p", { class: "muted", text: "Nog geen belasting om te vergelijken." }));
+
+  const nightCard = h("section", { class: "card stack" },
+    h("div", { class: "row between" }, h("h2", { text: "Je nacht" }),
+      night ? h("span", { class: "muted", text: dateLabel(night.laatste.d) }) : null),
+    night ? [
+      h("div", { class: "stats-grid" },
+        analyticsStat("Slaapduur", hoursText(night.laatste.uren), `doel ${night.slaapdoel_uren} u`),
+        analyticsStat("Slaapscore", night.laatste.score != null ? nl(night.laatste.score) : "–", "van je horloge"),
+        analyticsStat("HRV", night.hrv?.waarde != null ? `${nl(night.hrv.waarde)} ms` : "–", night.hrv ? `${signed(night.hrv.verschil)} t.o.v. gemiddeld` : ""),
+        analyticsStat("Rusthartslag", night.rhr?.waarde != null ? `${nl(night.rhr.waarde)} bpm` : "–", night.rhr ? `${signed(night.rhr.verschil)} t.o.v. gemiddeld` : ""),
+        analyticsStat("Slaapschuld", `${nl(night.slaapschuld_uren, 1)} u`, "laatste 4 nachten")),
+      h("div", { class: "night-bars", role: "img", "aria-label": "Slaapduur van de laatste nachten" },
+        ...night.nachten.map(n => h("div", { class: "night-bar" },
+          h("div", { class: "night-bar-fill", style: `height:${Math.min(100, Math.round(n.uren / 10 * 100))}%`, title: `${hoursText(n.uren)}` }),
+          h("span", { class: "muted small-text", text: DAGEN_KORT[(new Date(`${n.d}T00:00:00Z`).getUTCDay() + 6) % 7] }))))
+    ] : h("p", { class: "muted", text: "Nog geen slaapgegevens. Draag je horloge ’s nachts en koppel het via Koppelingen (Intervals.icu): dan zie je hier slaap, HRV en rusthartslag." }));
+
+  body.append(
+    h("div", { class: "stats-grid analytics-top" },
+      analyticsStat("Fitness · CTL", hasLoad ? nl(k.ctl) : "–", "belasting 42 dagen"),
+      analyticsStat("Vermoeidheid · ATL", hasLoad ? nl(k.atl) : "–", "belasting 7 dagen"),
+      analyticsStat("Vorm · TSB", hasLoad ? signed(k.tsb, 0) : "–", k.vorm_label || ""),
+      analyticsStat("Volume · 7d", `${nl(k.volume.uren, 1)} u`, `${k.volume.sessies} ${k.volume.sessies === 1 ? "rit" : "ritten"}`),
+      analyticsStat("Gewicht", k.gewicht ? `${nl(k.gewicht.kg, 1)} kg` : "–", k.gewicht ? "laatste meting" : "geen data")),
+    h("div", { class: "analytics-panels" }, readinessCard, riskCard, balanceCard),
+    h("section", { class: "card stack" },
+      h("div", { class: "row between" }, h("h2", { text: "Prestatiebeheer" }),
+        h("div", { class: "chart-legend muted small-text" },
+          h("span", { class: "legend-dot legend-bar" }), "belasting per dag",
+          h("span", { class: "legend-dot legend-ctl" }), "fitness",
+          h("span", { class: "legend-dot legend-atl" }), "vermoeidheid")),
+      hasLoad ? performanceChart(a.reeks) : h("p", { class: "muted", text: "Importeer een rit bij Activiteiten om je fitness en vermoeidheid te zien." })),
+    nightCard,
+    h("p", { class: "muted small-text", text: `Gebaseerd op ${a.bronnen.activiteiten} activiteiten en ${a.bronnen.nachten} nachten. Belasting komt uit Intervals.icu en anders uit een schatting met je FTP of maximale hartslag (${a.bronnen.vermogen} op vermogen, ${a.bronnen.hartslag} op hartslag, ${a.bronnen.schatting} grof geschat). Gereedheid en risico zijn indicatief en geen medisch advies.` }));
 }
 
 // ---------- account ----------

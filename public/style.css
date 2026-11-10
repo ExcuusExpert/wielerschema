@@ -367,3 +367,42 @@ input[type=text], input[type=password], input[type=number], input[type=date], se
   .chat-message { max-width: 94%; }
   .chat-composer { position: sticky; bottom: 8px; }
 }
+
+/* ---------- analyse en racekop ---------- */
+.analytics-range { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+.range-btn { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: .85rem; padding: 5px 11px; border-radius: 8px; cursor: pointer; }
+.range-btn.active { background: var(--accent); color: var(--accent-text); }
+.analytics-panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.analytics-panels .card, .stack > .card { margin-bottom: 0; }
+.big-number { margin: 0; }
+.big-number strong { font-size: 2.6rem; line-height: 1; letter-spacing: -.04em; color: var(--accent); }
+.small-text { font-size: .82rem; }
+.meter { height: 8px; border-radius: 99px; background: var(--card2); overflow: hidden; }
+.meter > span { display: block; height: 100%; border-radius: 99px; background: var(--accent); }
+.meter-risk { background: linear-gradient(90deg, #cfe0bd, #f3d9a8 55%, #f1b3ac); }
+.meter-risk > span { background: transparent; border-right: 3px solid var(--text); border-radius: 0; }
+.mini-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.mini-stats > div { display: flex; flex-direction: column; gap: 2px; }
+.chart-svg { width: 100%; height: auto; display: block; }
+.chart-grid { stroke: var(--line); stroke-width: 1; }
+.chart-label { fill: var(--muted); font-size: 11px; }
+.chart-bar { fill: #dfe5df; }
+.chart-line { fill: none; stroke-width: 2.2; stroke-linejoin: round; stroke-linecap: round; }
+.chart-ctl { stroke: #5b9bd5; }
+.chart-atl { stroke: #e8837a; }
+.chart-legend { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-left: 8px; }
+.legend-bar { background: #dfe5df; } .legend-ctl { background: #5b9bd5; } .legend-atl { background: #e8837a; }
+.night-bars { display: flex; align-items: flex-end; gap: 10px; height: 120px; }
+.night-bar { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; height: 100%; }
+.night-bar-fill { width: 100%; max-width: 44px; min-height: 3px; border-radius: 6px 6px 2px 2px; background: #8fb7d9; }
+.tag { display: inline-block; padding: 2px 9px; border-radius: 99px; background: var(--card2); color: var(--muted); font-size: .78rem; font-weight: 650; }
+.tag-accent { background: #e3efd6; color: var(--accent); }
+.race-header { display: flex; flex-direction: column; gap: 16px; }
+.race-title h2 { font-size: 1.5rem; letter-spacing: -.03em; }
+.race-countdown { text-align: right; display: flex; flex-direction: column; }
+.race-countdown strong { font-size: 2.2rem; line-height: 1; color: var(--accent); }
+.race-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+.race-stat { display: flex; flex-direction: column; gap: 2px; }
+.race-stat-label { color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; }
+@media (max-width: 560px) { .mini-stats { grid-template-columns: 1fr; } }

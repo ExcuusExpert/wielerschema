@@ -18,6 +18,12 @@ const MAX_BODY_CHARS = 20000;
 const MAX_FIT_BYTES = 10 * 1024 * 1024;
 const GROQ_TIMEOUT_MS = 40000;
 const MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile"];
+// Gratis Groq-laag: tokens per minuut per model (invoer + gevraagde uitvoer tellen samen).
+// Controleer de echte waarden op console.groq.com/settings/limits en pas ze zo nodig aan.
+const MODEL_TPM = { "openai/gpt-oss-120b": 8000, "openai/gpt-oss-20b": 8000, "llama-3.3-70b-versatile": 12000 };
+const TPM_MARGIN = 300;
+const MIN_OUTPUT_TOKENS = 500;
+function estimateTokens(text) { return Math.ceil(String(text).length / 2.8); }
 
 const LEVELS = ["beginner", "gevorderd", "ervaren", "wedstrijd"];
 const METER_OPTIONS = ["power", "heart_rate", "both", "none"];
@@ -527,14 +533,24 @@ function extractJson(text) {
 }
 
 // Geeft { data } | { busy } | { failed }
+// Houdt rekening met het tokenlimiet per minuut: de uitvoerruimte wordt aangepast aan de lengte van de prompt.
 async function askGroqJson(env, user, maxTokens) {
   if (!env.GROQ_API_KEY) return { failed: true, auth: true };
   let rateLimited = false;
+  const inputTokens = estimateTokens(SYSTEM_COACH) + estimateTokens(user);
   const variants = [{ reasoning: true, jsonMode: true }, { reasoning: false, jsonMode: true }, { reasoning: false, jsonMode: false }];
   for (const model of MODELS) {
-    for (const v of variants) {
+    const tpm = MODEL_TPM[model] || 6000;
+    let out = Math.min(maxTokens, tpm - TPM_MARGIN - inputTokens);
+    if (out < Math.min(maxTokens, MIN_OUTPUT_TOKENS)) {
+      log("groq_skip_too_large", { model, inputTokens, tpm });
+      continue;
+    }
+    let shrunk = false;
+    for (let vi = 0; vi < variants.length; vi++) {
+      const v = variants[vi];
       const body = {
-        model, temperature: 0.6, max_completion_tokens: maxTokens,
+        model, temperature: 0.6, max_completion_tokens: out,
         messages: [{ role: "system", content: SYSTEM_COACH }, { role: "user", content: user }]
       };
       if (v.reasoning) { body.reasoning_effort = "low"; body.include_reasoning = false; }
@@ -562,6 +578,14 @@ async function askGroqJson(env, user, maxTokens) {
         log("groq_invalid_response", { model, variant: `${v.reasoning ? "reasoning" : "standard"}-${v.jsonMode ? "json" : "text"}` });
         break;
       }
+      if (res.status === 413 && !shrunk) {
+        // "Limit 8000, Requested 9500": verklein de uitvoerruimte met het teveel en probeer dezelfde variant nog eens.
+        const m = /Limit (\d+), Requested (\d+)/i.exec(String(data.error?.message || ""));
+        if (m) {
+          const smaller = out - (Number(m[2]) - Number(m[1])) - 200;
+          if (smaller >= Math.min(maxTokens, MIN_OUTPUT_TOKENS)) { out = smaller; shrunk = true; vi--; continue; }
+        }
+      }
       if (res.status === 429) { rateLimited = true; break; }
       if (res.status === 400) {
         log("groq_bad_request", { model, variant: `${v.reasoning ? "reasoning" : "standard"}-${v.jsonMode ? "json" : "text"}`, error: cleanText(data.error?.message, 200) });
@@ -571,7 +595,7 @@ async function askGroqJson(env, user, maxTokens) {
         log("groq_auth_error", { model, status: res.status });
         return { failed: true, auth: true };
       }
-      log("groq_api_error", { model, status: res.status, error: cleanText(data.error?.message, 160) });
+      log("groq_api_error", { model, status: res.status, inputTokens, out, error: cleanText(data.error?.message, 400) });
       break;
     }
   }
@@ -859,6 +883,7 @@ async function handleApi(request, env, url) {
   if (path === "/api/intervals/sync" && method === "POST") return intervalsSync(request, env, user);
   if (path === "/api/intervals/disconnect" && method === "POST") return intervalsDisconnect(env, user);
   if (path === "/api/activities" && method === "GET") return listActivities(env, user);
+  if (path === "/api/analytics" && method === "GET") return getAnalytics(url, env, user);
   if (path === "/api/activities/import" && method === "POST") return importFit(request, env, user);
   if (path.startsWith("/api/activities/") && method === "PATCH") return updateActivity(request, env, user, decodeURIComponent(path.slice("/api/activities/".length)));
   if (path.startsWith("/api/activities/") && method === "DELETE") return deleteActivity(env, user, decodeURIComponent(path.slice("/api/activities/".length)));
@@ -1176,6 +1201,29 @@ async function intervalsContext(env, userId) {
   };
 }
 
+// Compacte versie voor de AI-prompt: alleen samenvattende waarden, geen ruwe meetpunten (die zijn te groot voor de gratis Groq-limiet).
+const PROMPT_ACTIVITY_KEYS = ["name", "type", "start_date_local", "distance", "moving_time", "elapsed_time", "total_elevation_gain", "average_heartrate", "max_heartrate", "average_watts", "icu_average_watts", "icu_weighted_avg_watts", "icu_training_load", "icu_intensity", "average_speed", "calories", "feel", "icu_rpe"];
+const PROMPT_WELLNESS_KEYS = ["id", "date", "ctl", "atl", "rampRate", "weight", "restingHR", "hrv", "hrvSDNN", "sleepSecs", "sleepScore", "sleepQuality", "avgSleepingHR", "readiness", "fatigue", "soreness", "stress", "mood", "motivation", "injury", "spO2", "steps"];
+function pickPromptKeys(obj, keys) {
+  const out = {};
+  for (const key of keys) {
+    const value = obj?.[key];
+    if (value === null || value === undefined || typeof value === "object") continue;
+    out[key] = typeof value === "string" ? value.slice(0, 80) : value;
+  }
+  return out;
+}
+async function intervalsPromptContext(env, userId) {
+  const [activities, wellness] = await Promise.all([
+    env.DB.prepare("SELECT activity_date, data FROM intervals_activities WHERE user_id = ? ORDER BY activity_date DESC LIMIT 5").bind(userId).all(),
+    env.DB.prepare("SELECT wellness_date, data FROM intervals_wellness WHERE user_id = ? ORDER BY wellness_date DESC LIMIT 14").bind(userId).all()
+  ]);
+  return {
+    recente_activiteiten: (activities.results || []).map(row => pickPromptKeys(JSON.parse(row.data), PROMPT_ACTIVITY_KEYS)),
+    herstel_en_slaap: (wellness.results || []).map(row => pickPromptKeys(JSON.parse(row.data), PROMPT_WELLNESS_KEYS))
+  };
+}
+
 async function recentActivityContext(env, userId) {
   const rows = (await env.DB.prepare(
     "SELECT activity_date, data FROM intervals_activities WHERE user_id = ? ORDER BY activity_date DESC, updated_at DESC LIMIT 10"
@@ -1256,6 +1304,158 @@ async function updateWorkout(request, env, user) {
   await env.DB.prepare("UPDATE weeks SET detail = ? WHERE user_id = ? AND week_no = ?")
     .bind(JSON.stringify(updatedWeek), user.id, weekNo).run();
   return json({ week: updatedWeek });
+}
+
+// ---------- analyse: alles wordt uit opgeslagen gegevens berekend, zonder AI (kost dus geen Groq-tokens) ----------
+const ANALYSE_DAGEN = [7, 28, 84, 182, 365];
+const SLAAPDOEL_UREN = 8;
+const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const round1 = (n) => (n == null ? null : Math.round(n * 10) / 10);
+const sumOf = (arr) => arr.reduce((a, b) => a + b, 0);
+const meanOf = (arr) => (arr.length ? sumOf(arr) / arr.length : null);
+function sdOf(arr) {
+  if (arr.length < 3) return null;
+  const m = meanOf(arr);
+  return Math.sqrt(meanOf(arr.map(x => (x - m) ** 2)));
+}
+const clampNum = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+
+// Belasting (TSS-achtig) van één activiteit: Intervals-waarde, anders geschat uit vermogen of hartslag.
+function activityLoad(a, intake) {
+  const hours = num(a.elapsed) ? a.elapsed / 3600 : 0;
+  if (!hours) return { load: 0, bron: "geen" };
+  if (num(a.icu_load) > 0) return { load: a.icu_load, bron: "intervals" };
+  if (num(a.watts) > 0 && intake?.ftp > 0) return { load: Math.min(600, hours * (a.watts / intake.ftp) ** 2 * 100), bron: "vermogen" };
+  if (num(a.hr) > 0 && intake?.hr_max > 0) return { load: Math.min(600, hours * (a.hr / (intake.hr_max * 0.9)) ** 2 * 100), bron: "hartslag" };
+  return { load: hours * 50, bron: "schatting" };
+}
+
+async function getAnalytics(url, env, user) {
+  const asked = Number(url.searchParams.get("dagen"));
+  const range = ANALYSE_DAGEN.includes(asked) ? asked : 84;
+  const end = today();
+  const start = addDays(end, -(range - 1));
+  const warm = addDays(start, -42);
+  const [planRow, actRows, wellRows] = await Promise.all([
+    env.DB.prepare("SELECT intake FROM plans WHERE user_id = ?").bind(user.id).first(),
+    // json_extract: de ruwe meetpunten van FIT-ritten worden zo niet ingelezen
+    env.DB.prepare(
+      `SELECT activity_date AS d, json_extract(data, '$.elapsed_time') AS elapsed,
+        COALESCE(json_extract(data, '$.average_watts'), json_extract(data, '$.icu_average_watts')) AS watts,
+        json_extract(data, '$.average_heartrate') AS hr, json_extract(data, '$.icu_training_load') AS icu_load
+       FROM intervals_activities WHERE user_id = ? AND activity_date >= ? AND activity_date <= ?`
+    ).bind(user.id, warm, end).all(),
+    env.DB.prepare("SELECT wellness_date AS d, data FROM intervals_wellness WHERE user_id = ? AND wellness_date >= ? ORDER BY wellness_date")
+      .bind(user.id, warm).all()
+  ]);
+  let intake = null;
+  try { intake = planRow ? JSON.parse(planRow.intake) : null; } catch {}
+
+  const acts = actRows.results || [];
+  const loads = {};
+  const bronnen = { intervals: 0, vermogen: 0, hartslag: 0, schatting: 0 };
+  for (const a of acts) {
+    const { load, bron } = activityLoad(a, intake);
+    loads[a.d] = (loads[a.d] || 0) + load;
+    if (bronnen[bron] !== undefined) bronnen[bron]++;
+  }
+  const wellness = {};
+  for (const row of wellRows.results || []) {
+    let w = {};
+    try { w = JSON.parse(row.data); } catch {}
+    wellness[row.d] = {
+      ctl: num(w.ctl), atl: num(w.atl), weight: num(w.weight), hrv: num(w.hrv) ?? num(w.hrvSDNN),
+      rhr: num(w.restingHR), sleepSecs: num(w.sleepSecs), sleepScore: num(w.sleepScore)
+    };
+  }
+
+  // Fitness (CTL, 42 dagen), vermoeidheid (ATL, 7 dagen), vorm (TSB). Waarden uit Intervals.icu gaan voor als die er zijn.
+  const total = daysBetween(warm, end);
+  let ctl = 0, atl = 0;
+  const all = [];
+  for (let i = 0; i <= total; i++) {
+    const d = addDays(warm, i);
+    const load = loads[d] || 0;
+    ctl += (load - ctl) / 42;
+    atl += (load - atl) / 7;
+    const w = wellness[d];
+    if (w && w.ctl != null && w.atl != null) { ctl = w.ctl; atl = w.atl; }
+    all.push({ d, load, ctl, atl });
+  }
+  const reeks = all.filter(x => x.d >= start).map(x => ({ d: x.d, load: round1(x.load), ctl: round1(x.ctl), atl: round1(x.atl), tsb: round1(x.ctl - x.atl) }));
+  const last = all[all.length - 1];
+  const tsb = last.ctl - last.atl;
+
+  const last7 = all.slice(-7).map(x => x.load);
+  const last28 = all.slice(-28).map(x => x.load);
+  const acute = sumOf(last7);
+  const chronicWeekly = sumOf(last28) / 4;
+  const acwr = chronicWeekly > 0 ? acute / chronicWeekly : null;
+  const sd7 = sdOf(last7);
+  const monotony = sd7 > 0 ? meanOf(last7) / sd7 : null;
+  const strain = monotony != null ? acute * monotony : null;
+  const ramp = all.length > 7 ? last.ctl - all[all.length - 8].ctl : null;
+
+  const weekAgo = addDays(end, -6);
+  const week = acts.filter(a => a.d >= weekAgo);
+  const volumeUren = sumOf(week.map(a => (num(a.elapsed) ? a.elapsed / 3600 : 0)));
+  const weightDate = Object.keys(wellness).filter(d => wellness[d].weight != null).sort().pop();
+
+  // Nacht: laatste nachten met slaapgegevens van het horloge (via Intervals.icu)
+  const nightDates = Object.keys(wellness).filter(d => wellness[d].sleepSecs > 0).sort().reverse().slice(0, 7);
+  const nights = nightDates.map(d => ({ d, uren: round1(wellness[d].sleepSecs / 3600), score: wellness[d].sleepScore }));
+  const sleepDebt = nights.length ? round1(sumOf(nights.slice(0, 4).map(n => Math.max(0, SLAAPDOEL_UREN - n.uren)))) : null;
+  const hrvDates = Object.keys(wellness).filter(d => wellness[d].hrv != null).sort();
+  const rhrDates = Object.keys(wellness).filter(d => wellness[d].rhr != null).sort();
+  const baseline = (dates, key) => {
+    const values = dates.slice(-14).map(d => wellness[d][key]);
+    const latest = values.length ? values[values.length - 1] : null;
+    const m = meanOf(values);
+    const sd = sdOf(values);
+    return { waarde: latest, gemiddeld14: round1(m), verschil: latest != null && m != null ? round1(latest - m) : null, z: latest != null && sd > 0 ? (latest - m) / sd : null };
+  };
+  const hrv = hrvDates.length ? baseline(hrvDates, "hrv") : null;
+  const rhr = rhrDates.length ? baseline(rhrDates, "rhr") : null;
+
+  // Gereedheid (indicatief, geen medisch advies): slaap, HRV, rusthartslag en vorm
+  let readiness = null;
+  const hasSignal = nights.length || hrv || rhr || acts.length;
+  if (hasSignal) {
+    let score = 70;
+    if (hrv?.z != null) score += clampNum(hrv.z, -2, 2) * 8;
+    if (rhr?.z != null) score -= clampNum(rhr.z, -2, 2) * 6;
+    if (nights.length) score += clampNum((nights[0].uren - 7.5) * 4, -12, 12);
+    if (acts.length) score += clampNum(tsb, -30, 20) * 0.4;
+    score = Math.round(clampNum(score, 0, 100));
+    readiness = { score, label: score >= 75 ? "Goed om te trainen" : score >= 55 ? "Normaal" : score >= 35 ? "Rustig aan" : "Neem rust" };
+  }
+
+  // Belastingsrisico (0-100) uit belastingsverhouding, groeitempo en eentonigheid
+  let risk = null;
+  if (acwr != null) {
+    const raw = Math.max(0, (acwr - 1) / 0.5) * 50 + Math.max(0, ((ramp ?? 0) - 5) / 5) * 30 + Math.max(0, ((monotony ?? 0) - 1.5) / 1.5) * 20;
+    const score = Math.round(clampNum(raw, 0, 100));
+    risk = { score, label: score < 30 ? "Laag" : score < 60 ? "Matig" : "Hoog" };
+  }
+
+  return json({
+    dagen: range, vandaag: end, reeks,
+    kaarten: {
+      ctl: round1(last.ctl), atl: round1(last.atl), tsb: round1(tsb),
+      vorm_label: !acts.length && !Object.keys(wellness).length ? null : tsb > 5 ? "Fris" : tsb >= -10 ? "Neutraal" : "Vermoeid",
+      volume: { uren: round1(volumeUren), sessies: week.length },
+      gewicht: weightDate ? { kg: round1(wellness[weightDate].weight), datum: weightDate } : null
+    },
+    gereedheid: readiness ? { ...readiness, hrv, rhr, slaapschuld_uren: sleepDebt } : null,
+    belastingsrisico: risk ? { ...risk, groei_ctl_7d: round1(ramp) } : null,
+    belastingsverhouding: acwr == null ? null : {
+      acwr: Math.round(acwr * 100) / 100,
+      label: acwr < 0.8 ? "Te weinig" : acwr <= 1.3 ? "Sweet spot" : "Pas op",
+      eentonigheid: round1(monotony), weekbelasting: Math.round(acute), spanning: strain != null ? Math.round(strain) : null
+    },
+    nacht: nights.length ? { laatste: nights[0], nachten: nights.slice().reverse(), slaapschuld_uren: sleepDebt, slaapdoel_uren: SLAAPDOEL_UREN, hrv, rhr } : null,
+    bronnen: { activiteiten: acts.length, nachten: nights.length, ...bronnen }
+  });
 }
 
 async function questions(request, env, user) {
@@ -1464,7 +1664,7 @@ async function coachChat(request, env, user) {
   const history = continuous
     ? await recentCoachMessages(env, user.id)
     : await threadMessages(env, user.id, weekNo, dayNo);
-  const transcript = history.slice(-10).map(item => ({ role: item.role, content: item.content }));
+  const transcript = history.slice(-8).map(item => ({ role: item.role, content: String(item.content || "").slice(0, item.role === "assistant" ? 500 : 600) }));
   const userContext = [...history.filter(item => item.role === "user").map(item => item.content), message].join("\n");
   const explicitDuration = requestedDurationMinutes(message);
   const explicitDay = requestedDayNo(message);
@@ -1487,7 +1687,7 @@ async function coachChat(request, env, user) {
   const prompt = `<coachgesprek>${JSON.stringify(transcript)}</coachgesprek>\n` +
     (continuous ? "Dit is een doorlopend gesprek. Eerdere berichten kunnen over een andere week of training gaan. Voor vragen over vandaag is de expliciete datum en training hieronder leidend; vraag de gebruiker niet welke dag het is. Als de training van vandaag rust is, zeg dat duidelijk. Gebruik het volledige weekschema om verzoeken over een andere weekdag te begrijpen; de week- en dagnummers zijn alleen interne context.\n" : "") +
     `<gebruiker>${JSON.stringify(intake)}</gebruiker>\n` +
-    `<intervals-icu>${JSON.stringify(await intervalsContext(env, user.id))}</intervals-icu>\n` +
+    `<intervals-icu>${JSON.stringify(await intervalsPromptContext(env, user.id))}</intervals-icu>\n` +
     `<recente-fietstrainingen>${JSON.stringify(await recentActivityContext(env, user.id))}</recente-fietstrainingen>\n` +
     (continuous ? `Vandaag is ${today()} (${DAG_NAMEN[dayNo]}, dag ${dayNo}) in de tijdzone Europe/Amsterdam. ${scheduleState}\nTraining die vandaag volgens het schema gepland staat: ${JSON.stringify(todayWorkout)}.\n` : "") +
     (eventIntent && !eventRequest
