@@ -8,7 +8,10 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 
 - Account maken en inloggen (gebruikersnaam en wachtwoord, geen e-mail nodig).
 - Publieke startpagina met uitleg en aparte keuzes om in te loggen of een account te maken.
-- Intakewizard in drie stappen: doel, geboortedatum en niveau; trainingstijd en dagen; meetapparatuur, beperkingen en overige trainingservaring.
+- Intakewizard in drie stappen: doel, geboortedatum, niveau en wedstrijden; trainingstijd en dagen; meetapparatuur, beperkingen en overige trainingservaring.
+- Doel en wedstrijden (maximaal 4) mogen tot 20 weken vooruit. Een schema duurt maximaal 16 weken (8 weken zonder datum); wedstrijden binnen het schema komen in de planning.
+- Analyse-tab: fitness, vermoeidheid, vorm, gereedheid, belastingsverhouding, prestatiegrafiek en nachtgegevens. Alles wordt zonder AI berekend. Nachtgegevens vereisen een Intervals.icu-koppeling.
+- Eenvoudige weergave (Account): haalt ingewikkelde cijfers weg, toont zones in gewone woorden en laat de coach in eenvoudige taal schrijven. Staat standaard aan voor renners jonger dan 16.
 - Voor jeugdrenners van 12–17 houdt de coach rekening met leeftijd, herstel en plezier.
 - Intake: doel, datum, niveau, uren per week, beschikbare dagen, ervaring en beperkingen. Een geboortedatum is verplicht; alleen de berekende leeftijd gaat naar Groq.
 - Keuze uit vermogensmeter, hartslagmeter, beide of geen van beide. Vijf hartslagzones worden berekend uit je maximale hartslag. Voor vermogen vul je je FTP in en kies je vijf of zeven zones; de standaardgrenzen volgen FTP-percentages en kunnen worden aangepast.
@@ -34,7 +37,7 @@ Nog niet: wachtwoord vergeten (er is geen e-mail), automatische koppelingen met 
 - De AI schrijft nooit rechtstreeks naar de database: de worker controleert elk antwoord. Trainingen en wijzigingen worden opgeschoond en de weektotalen begrensd op het maximale aantal uren; een concreet genoemd evenement kan op de opgegeven dag worden gezet.
 - Meldt iemand klachten, dan wordt de volgende week hard begrensd op de helft en krijgt de gebruiker een korte melding dat de week extra licht en op herstel gericht is.
 - Wachtwoorden worden met PBKDF2 versleuteld, sessies zitten in een beveiligde cookie, schrijfacties van andere websites worden geweigerd, en er zijn limieten voor registreren, inloggen en AI-gebruik per gebruiker en per dag.
-- De app staat maximaal 100 AI-aanvragen per account per dag toe en 2000 aanvragen totaal per dag. Dit is ruim voor een kleine groep, maar er blijft een gezamenlijke noodlimiet tegen misbruik en onverwachte kosten.
+- De app staat maximaal 15 AI-aanvragen per account per dag toe en 100 aanvragen totaal per dag (bovenin `src/worker.js`). Dat past bij de gratis Groq-laag (ongeveer 200.000 tokens per dag per model); verhoog de limieten pas na een betaald Groq-account. Een eigen account kan onbeperkt via het secret `AI_UNLIMITED_USER_IDS` (gebruikers-id's, komma-gescheiden), maar de gezamenlijke limiet blijft gelden.
 - IP-adressen worden nooit zelf opgeslagen, alleen een dagelijks wisselende hash voor de limieten.
 - Coachberichten worden bewaard (maximaal 100 per account). De chat gebruikt recente berichten als gesprekscontext; de server controleert elke voorgestelde aanpassing voordat die wordt opgeslagen.
 - De opgegeven leeftijd wordt bij de intake gevalideerd; de coach krijgt voor sporters jonger dan 18 extra, voorzichtige instructies. De openbare inzet voor minderjarigen en de privacy-/toestemmingseisen moeten vóór lancering apart juridisch worden beoordeeld; deze versie vraagt geen afzonderlijke ouderbevestiging.
@@ -86,7 +89,7 @@ node test/frontend-smoke.mjs   # rooktest van de website
 
 1. **Controleer de contactgegevens in `public/privacy.html`.** Controleer dat het opgegeven privacycontactadres klopt voordat je de site openbaar maakt.
 2. **Privacy en AVG.** De app verwerkt trainingsgegevens en mogelijk gezondheidsinformatie (klachten, beperkingen) van anderen en stuurt die naar Groq in de VS. Ik ben geen jurist, dus laat de privacyverklaring en je verplichtingen (zoals verwerkersafspraken met Cloudflare en Groq) nakijken, vooral omdat het openbaar is. Houd de invoer beperkt: velden voor klachten zijn optioneel.
-3. **Kosten en limieten van Groq.** Een schema is een flinke aanvraag. De app begrenst op 100 AI-aanvragen per gebruiker per dag en 2000 voor iedereen samen (zie bovenin `src/worker.js`). Controleer Groq-kosten en pas deze limieten aan als dat nodig is.
+3. **Kosten en limieten van Groq.** Een chatbericht kost ongeveer 4.000 tot 5.000 tokens en een schema iets meer. De app begrenst op 15 AI-aanvragen per gebruiker per dag en 100 voor iedereen samen (zie bovenin `src/worker.js`). Controleer de limieten op console.groq.com/settings/limits.
 4. **Wachtwoord vergeten.** Zonder e-mail kan dat niet. Een goede volgende stap is inloggen met een e-maillink (via een dienst zoals Resend), ook handig voor eventuele meldingen.
 5. **Opmaak en teksten** zijn een eerste opzet. Kijk of de toon en de vragen van de coach bij je doelgroep passen.
 

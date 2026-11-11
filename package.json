@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test/worker.test.mjs",
+    "test": "node --test test/worker.test.mjs test/tpm.test.mjs test/analytics.test.mjs test/races.test.mjs",
+    "smoke": "node test/frontend-smoke.mjs",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy"
   }

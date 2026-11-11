@@ -406,3 +406,8 @@ input[type=text], input[type=password], input[type=number], input[type=date], se
 .race-stat { display: flex; flex-direction: column; gap: 2px; }
 .race-stat-label { color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; }
 @media (max-width: 560px) { .mini-stats { grid-template-columns: 1fr; } }
+
+/* ---------- wedstrijden in de intake ---------- */
+.race-row { display: grid; grid-template-columns: 150px 1fr 150px auto; gap: 8px; align-items: center; }
+.label-text { margin: 0; font-weight: 650; }
+@media (max-width: 700px) { .race-row { grid-template-columns: 1fr 1fr; } .race-row input[type="text"] { grid-column: 1 / -1; } }

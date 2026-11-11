@@ -96,6 +96,7 @@ const sandbox = {
   URL: { createObjectURL: () => "blob:x" }, Blob: class {},
   document: {
     getElementById: (id) => ({ app: root.app, nav: root.nav, "sidebar-account": root.account, "coach-launcher": root.launcher })[id],
+    createElementNS: (ns, tag) => new El(tag),
     createElement: (tag) => {
       const el = new El(tag);
       if (tag === "canvas") {
@@ -304,6 +305,9 @@ ok(sandbox.copiedText.includes("Duration: 70 minuten") &&
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Activiteiten")[0].click();
 ok(text().includes("FIT-bestand importeren") && text().includes("Nog geen activiteiten geïmporteerd") && !text().includes("TrainingPeaks"), "activiteiten-tab toont FIT-import en lege toestand");
 ok(!text().includes("Strava") && !text().includes("strava"), "Strava is uit de activiteitenpagina verwijderd");
+find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Analyse")[0].click();
+await tick(); await tick(); await tick();
+ok(text().includes("Training en herstel") && text().includes("Gereedheid om te trainen") && text().includes("Prestatiebeheer") && text().includes("Je nacht") && text().includes("Nog geen slaapgegevens"), "analysepagina toont kaarten, grafiek en lege nachtkaart");
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Koppelingen")[0].click();
 ok(text().includes("Koppelingen") && text().includes("GARMIN CONNECT") && text().includes("WAHOO") &&
   !find(root.nav, e => e.tagName === "BUTTON" && /Garmin koppelen|Wahoo koppelen/.test(e.textContent)).length,
@@ -371,5 +375,15 @@ find(credentialForm, e => e.tagName === "INPUT" && e.attrs.type === "text")[0].v
 find(credentialForm, e => e.tagName === "INPUT" && e.attrs.autocomplete === "current-password")[0].value = "een-lang-wachtwoord";
 await submit(credentialForm);
 ok(text().includes("hessel2") && text().includes("Accountgegevens opgeslagen."), "gebruikersnaam kan vanuit Account worden gewijzigd");
+find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Account")[0].click();
+const simpleBox = find(root.app, e => e.tagName === "INPUT" && e.attrs.id === "simple-mode")[0];
+ok(text().includes("Eenvoudige weergave") && simpleBox, "account heeft een schakelaar voor eenvoudige weergave");
+simpleBox.checked = true;
+for (const fn of simpleBox.listeners.change || []) await fn();
+await tick(); await tick();
+ok(text().includes("Eenvoudige weergave staat aan."), "eenvoudige weergave kan worden aangezet");
+find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Analyse")[0].click();
+await tick(); await tick(); await tick();
+ok(text().includes("Hoe gaat het met je?") && text().includes("Hoe voelt je lichaam?") && !text().includes("Prestatiebeheer") && !text().includes("Fitness"), "analyse zonder ingewikkelde cijfers in eenvoudige weergave");
 console.log("\nRooktest geslaagd.");
 process.exit(0);

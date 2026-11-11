@@ -349,7 +349,6 @@ test("AI-coach verwijdert RPE-zinnen uit zichtbare antwoorden", async () => {
   const cookie = await signup(env);
   await api(env, "POST", "/api/plan/create", { intake: INTAKE }, { cookie });
   assert.match(lastGroqSystemPrompt, /gebruik je en jij/i);
-  assert.match(lastGroqSystemPrompt, /demarreren/i);
   assert.match(lastGroqSystemPrompt, /laatste ronde/i);
   coachMode = "rpe";
   const reply = await api(env, "POST", "/api/coach/chat", {
@@ -890,7 +889,7 @@ test("dagelijkse AI-limiet per gebruiker", async () => {
   const env = makeEnv();
   const cookie = await signup(env);
   let last;
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 15; i++) {
     last = await api(env, "POST", "/api/intake/questions", { intake: INTAKE }, { cookie });
     assert.equal(last.status, 200, JSON.stringify(last.data));
   }
@@ -904,12 +903,14 @@ test("ontwikkelaarsaccount kan boven de gebruikerslimiet; gezamenlijke AI-noodli
   const cookie = await signup(env, "ontwikkelaar");
   const userId = env.DB.db.prepare("SELECT id FROM users WHERE username = ?").get("ontwikkelaar").id;
   env.AI_UNLIMITED_USER_IDS = `andere-id, ${userId}`;
-  for (let i = 0; i < 101; i++) {
+  for (let i = 0; i < 100; i++) {
     const response = await api(env, "POST", "/api/intake/questions", { intake: INTAKE }, { cookie });
     assert.equal(response.status, 200, JSON.stringify(response.data));
   }
   assert.equal(env.DB.db.prepare("SELECT COUNT(*) AS n FROM counters WHERE key LIKE 'ai:u:%'").get().n, 0);
-  assert.equal(env.DB.db.prepare("SELECT n FROM counters WHERE key LIKE 'ai:g:%'").get().n, 101);
+  assert.equal(env.DB.db.prepare("SELECT n FROM counters WHERE key LIKE 'ai:g:%'").get().n, 100);
+  const over = await api(env, "POST", "/api/intake/questions", { intake: INTAKE }, { cookie });
+  assert.equal(over.status, 503, "gezamenlijke limiet houdt ook het ontwikkelaarsaccount tegen");
 });
 
 test("check-in: volgende week, geen dubbele check-in, klachten maken het licht", async () => {

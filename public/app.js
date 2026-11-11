@@ -7,7 +7,11 @@ const TYPE_LABEL = {
   rust: "Rust", duurrit: "Duurrit", tempo: "Tempo", drempel: "Drempel", vo2max: "VO2max", sprint: "Sprint",
   kracht: "Kracht", techniek: "Techniek", herstelrit: "Herstelrit", race: "Wedstrijd", mtb: "MTB"
 };
+const MAX_HORIZON_DAYS = 140; // doel en wedstrijden: tot 20 weken vooruit
 const ZONE_OPTIONS = ["", "Z1", "Z2", "Z3", "Z4", "Z5", "Z6", "Z7"];
+// In de eenvoudige weergave tonen we zones in gewone woorden
+const ZONE_WOORDEN = { Z1: "Herstel", Z2: "Rustig", Z3: "Matig", Z4: "Stevig", Z5: "Zwaar", Z6: "Hard", Z7: "Sprint" };
+const zoneShown = zone => (state.simple && ZONE_WOORDEN[zone]) || zone;
 const FASE_LABEL = { basis: "Basis", opbouw: "Opbouw", piek: "Piek", afbouw: "Afbouw", herstel: "Herstel" };
 
 const app = document.getElementById("app");
@@ -436,7 +440,7 @@ function viewIntake(prefill) {
 
   const doel = h("input", { type: "text", name: "goal", maxlength: 200, required: true, placeholder: "Bijvoorbeeld: mijn eerste wedstrijd rijden", value: p.doel || "" });
   const birthDate = birthDateInput(savedProfile.birth_date || "");
-  const datum = h("input", { type: "date", min: addDays(todayIso(), 7), value: p.datum || "" });
+  const datum = h("input", { type: "date", min: addDays(todayIso(), 7), max: addDays(todayIso(), MAX_HORIZON_DAYS), value: p.datum || "" });
   const niveau = h("select", { required: true }, ...[["beginner", "Beginner"], ["gevorderd", "Gevorderd"], ["ervaren", "Ervaren"], ["wedstrijd", "Wedstrijdrenner"]]
     .map(([v, t]) => h("option", { value: v, selected: (p.niveau || "gevorderd") === v, text: t })));
   const uren = h("input", { type: "number", min: 2, max: 25, step: 0.5, required: true, value: p.uren_per_week ?? 6 });
@@ -455,6 +459,32 @@ function viewIntake(prefill) {
   const jaren = h("input", { type: "number", min: 0, max: 60, placeholder: "Optioneel", value: p.ervaring_jaren ?? "" });
   const beperkingen = h("textarea", { rows: 2, maxlength: 300, placeholder: "Optioneel, bijvoorbeeld een oude blessure. Vul alleen in wat je kwijt wilt." }, p.beperkingen || "");
   const opmerkingen = h("textarea", { rows: 2, maxlength: 400, placeholder: "Optioneel, bijvoorbeeld: ik werk onregelmatig of train vooral buiten." }, p.opmerkingen || "");
+  // Wedstrijden: tot 4, tot 20 weken vooruit
+  const MAX_RACES = 4;
+  const races = (p.wedstrijden || []).filter(r => r.datum >= addDays(todayIso(), 7) && r.datum <= addDays(todayIso(), MAX_HORIZON_DAYS)).map(r => ({ ...r }));
+  const raceList = h("div", { class: "race-rows stack" });
+  const addRace = h("button", { type: "button", class: "btn ghost", text: "Wedstrijd toevoegen" });
+  function renderRaces() {
+    clear(raceList);
+    races.forEach((race, i) => {
+      const date = h("input", { type: "date", min: addDays(todayIso(), 7), max: addDays(todayIso(), MAX_HORIZON_DAYS), value: race.datum || "", "aria-label": `Datum wedstrijd ${i + 1}` });
+      date.addEventListener("change", () => { race.datum = date.value; });
+      const name = h("input", { type: "text", maxlength: 80, placeholder: "Naam van de wedstrijd", value: race.naam || "", "aria-label": `Naam wedstrijd ${i + 1}` });
+      name.addEventListener("input", () => { race.naam = name.value; });
+      const priority = h("select", { "aria-label": `Belang wedstrijd ${i + 1}` },
+        ...[["A", "Hoofddoel"], ["B", "Belangrijk"], ["C", "Oefenwedstrijd"]].map(([value, label]) => h("option", { value, selected: (race.prioriteit || "B") === value, text: label })));
+      priority.addEventListener("change", () => { race.prioriteit = priority.value; });
+      raceList.appendChild(h("div", { class: "race-row" }, date, name, priority,
+        h("button", { type: "button", class: "btn ghost", text: "Verwijder", onclick: () => { races.splice(i, 1); renderRaces(); } })));
+    });
+    addRace.hidden = races.length >= MAX_RACES;
+  }
+  addRace.addEventListener("click", () => { races.push({ datum: "", naam: "", prioriteit: "B" }); renderRaces(); });
+  const racesBlock = h("div", { class: "stack" },
+    h("p", { class: "label-text", text: "Wedstrijden (optioneel)" }),
+    h("p", { class: "hint", text: "Heb je wedstrijden of evenementen in de komende 20 weken? De coach plant rustiger ervoor en laat je erna herstellen." }),
+    raceList, addRace);
+  renderRaces();
   const stepNames = ["Doel", "Tijd", "Training"];
   let currentStep = 0;
   const progressItems = stepNames.map((name, index) => h("li", {
@@ -471,7 +501,8 @@ function viewIntake(prefill) {
       h("p", { class: "muted", text: "Vertel waar je naartoe wilt werken en op welk niveau je fietst." }),
       field("Wat wil je bereiken?", doel),
       field("Geboortedatum (DD-MM-JJJJ)", birthDate, "Je leeftijd helpt de coach het schema af te stemmen. Alleen je leeftijd, niet je geboortedatum, wordt met de AI gedeeld."),
-      field("Heb je een datum voor je doel?", datum, "Optioneel. Zonder datum maakt de coach een schema van ongeveer 8 weken."),
+      field("Heb je een datum voor je doel?", datum, "Optioneel, tot 20 weken vooruit. Zonder datum maakt de coach een schema van 8 weken. Een schema duurt maximaal 16 weken; ligt je doel verder weg, dan bouwt de coach eerst op en maak je daarna een nieuw schema."),
+      racesBlock,
       field("Hoe zou je je niveau omschrijven?", niveau)),
     h("section", { class: "wizard-panel stack", hidden: true },
       h("h2", { text: "2. Jouw tijd" }),
@@ -506,7 +537,8 @@ function viewIntake(prefill) {
 
   function collect() {
     return {
-      doel: doel.value, datum: datum.value || null, niveau: niveau.value, uren_per_week: Number(uren.value),
+      doel: doel.value, datum: datum.value || null, niveau: niveau.value,
+      wedstrijden: races.filter(r => r.datum || (r.naam || "").trim()).map(r => ({ datum: r.datum, naam: (r.naam || "").trim(), prioriteit: r.prioriteit || "B" })), uren_per_week: Number(uren.value),
       dagen: dagenChecks.filter(d => d.box.checked).map(d => d.i),
       meter: meter.value,
       geboortedatum: parseDutchDate(birthDate.value),
@@ -1016,7 +1048,7 @@ function downloadIcs(plan, week) {
     if (dag.type === "rust") continue;
     const date = addDays(plan.start_date, (week.week_no - 1) * 7 + dag.dag);
     const compact = (s) => s.replace(/-/g, "");
-    const desc = `${TYPE_LABEL[dag.type] || dag.type}, ${minutesText(dag.minuten)}${dag.zone ? ", " + dag.zone : ""}. ${dag.beschrijving}`;
+    const desc = `${TYPE_LABEL[dag.type] || dag.type}, ${minutesText(dag.minuten)}${dag.zone ? ", " + zoneShown(dag.zone) : ""}. ${dag.beschrijving}`;
     lines.push("BEGIN:VEVENT", `UID:wielerschema-${compact(date)}-${week.week_no}-${dag.dag}@wielerschema`, `DTSTAMP:${stamp}`,
       `DTSTART;VALUE=DATE:${compact(date)}`, `DTEND;VALUE=DATE:${compact(addDays(date, 1))}`,
       `SUMMARY:${icsEscape("Fietstraining: " + dag.titel)}`, `DESCRIPTION:${icsEscape(desc)}`, "END:VEVENT");
@@ -1117,7 +1149,7 @@ function drawWeekImage(plan, week) {
     context.font = "20px system-ui, sans-serif";
     const descriptionY = y + 126;
     context.fillText(day.type === "rust" ? "Rust" :
-      `${TYPE_LABEL[day.type] || day.type} · ${minutesText(day.minuten)}${day.zone ? ` · ${day.zone}` : ""}`,
+      `${TYPE_LABEL[day.type] || day.type} · ${minutesText(day.minuten)}${day.zone ? ` · ${zoneShown(day.zone)}` : ""}`,
       x + 20, descriptionY);
     drawWrappedText(context, day.beschrijving, x + 20, descriptionY + 30, cardWidth - 40, 23, 2);
 
@@ -1198,7 +1230,7 @@ function dayCard(plan, week, dag) {
   const article = h("article", { class: `day ${dag.type === "rust" ? "rest" : `t-${dag.type}`}` },
     h("h4", { text: `${DAGEN_KORT[dag.dag]} ${dateLabel(date).split(" ").slice(1).join(" ")}` }),
     dag.type === "rust" ? h("p", { class: "muted", text: "Rust" }) : h("div", {},
-      h("p", { class: "badge", text: `${TYPE_LABEL[dag.type] || dag.type}${dag.zone ? " · " + dag.zone : ""}` }),
+      h("p", { class: "badge", text: `${TYPE_LABEL[dag.type] || dag.type}${dag.zone ? " · " + zoneShown(dag.zone) : ""}` }),
       h("p", { class: "dur", text: minutesText(dag.minuten) }),
       h("p", { class: "dtitle", text: dag.titel })),
     h("button", {
@@ -1256,12 +1288,12 @@ function workoutProfile(workout, intake) {
       class: `profile-segment${level ? ` profile-${block.zone.toLowerCase()}` : " profile-zone-unknown"}`,
       style: `flex-grow:${block.minuten};height:${height}%`,
       title: `${block.label}: ${block.minuten} min${block.zone ? `, ${block.zone}` : ""}`
-    }, h("span", { class: "profile-zone-label", text: block.zone || "—" }));
+    }, h("span", { class: "profile-zone-label", text: block.zone ? zoneShown(block.zone) : "—" }));
   }));
   const description = workout.blokken?.length
     && blocks.length > 1
     ? "De blokken volgen de trainingsopbouw uit het schema."
-    : workout.zone ? `Gelijkmatige training in ${workout.zone}.` : "Trainingszone niet opgegeven.";
+    : workout.zone ? `Gelijkmatige training in ${zoneShown(workout.zone)}.` : "Trainingszone niet opgegeven.";
   return h("figure", { class: "workout-profile" },
     h("figcaption", {},
       h("strong", { text: "Trainingsverloop" }),
@@ -1296,7 +1328,7 @@ function openWorkoutDetails(plan, week, dag) {
       closeButton),
     dag.type === "rust" ? h("p", { class: "muted", text: "Een rustdag om te herstellen en je volgende training fris te beginnen." }) :
       h("div", { class: "workout-detail-summary" },
-        h("span", { class: "badge", text: `${TYPE_LABEL[dag.type] || dag.type}${dag.zone ? " · " + dag.zone : ""}` }),
+        h("span", { class: "badge", text: `${TYPE_LABEL[dag.type] || dag.type}${dag.zone ? " · " + zoneShown(dag.zone) : ""}` }),
         h("strong", { text: minutesText(dag.minuten) }),
         h("p", { text: dag.beschrijving || "Geen extra beschrijving." }),
         workoutProfile(dag, plan.intake)),
@@ -1788,6 +1820,41 @@ function performanceChart(reeks) {
     labelAt(0), n > 2 ? labelAt(Math.floor((n - 1) / 2)) : null, n > 1 ? labelAt(n - 1) : null);
 }
 
+function renderSimpleAnalytics(body, a) {
+  clear(body);
+  const readiness = a.gereedheid, balance = a.belastingsverhouding, night = a.nacht, week = a.kaarten.volume;
+  const readinessText = {
+    "Goed om te trainen": "Je lichaam is er klaar voor. Een goede dag om te trainen.",
+    "Normaal": "Je kunt gewoon trainen zoals gepland.",
+    "Rustig aan": "Train vandaag rustig of kort.",
+    "Neem rust": "Neem vandaag rust. Rust hoort ook bij trainen."
+  };
+  const balanceText = {
+    "Sweet spot": "Je opbouw is mooi in balans.",
+    "Pas op": "Je hebt de laatste tijd veel gedaan. Neem tijd om uit te rusten.",
+    "Te weinig": "Je hebt de laatste tijd minder gedaan dan normaal."
+  };
+  body.append(
+    h("section", { class: "card stack" },
+      h("h2", { text: "Hoe voelt je lichaam?" }),
+      readiness ? [
+        h("p", { class: "big-number" }, h("strong", { text: readiness.label })),
+        meterBar(readiness.score),
+        h("p", { text: readinessText[readiness.label] || "" })
+      ] : h("p", { class: "muted", text: "Er zijn nog te weinig gegevens. Importeer een rit of koppel je horloge." })),
+    h("section", { class: "card stack" },
+      h("h2", { text: "Deze week" }),
+      h("p", { class: "big-number" }, h("strong", { text: week.sessies ? `${nl(week.uren, 1)} uur` : "Nog niet getraind" })),
+      h("p", { class: "muted", text: week.sessies ? `${week.sessies} ${week.sessies === 1 ? "rit" : "ritten"} in de laatste 7 dagen.` : "Importeer een rit om je week te zien." }),
+      balance ? h("p", { text: balanceText[balance.label] || "" }) : null),
+    h("section", { class: "card stack" },
+      h("h2", { text: "Je nacht" }),
+      night ? [
+        h("p", { class: "big-number" }, h("strong", { text: hoursText(night.laatste.uren) })),
+        h("p", { text: night.laatste.uren >= night.slaapdoel_uren - 0.5 ? "Goed geslapen!" : `Probeer vanavond wat eerder naar bed te gaan. Je lichaam herstelt tijdens het slapen. Een goed doel is ${night.slaapdoel_uren} uur.` })
+      ] : h("p", { class: "muted", text: "Nog geen slaapgegevens. Draag je horloge ’s nachts en koppel het via Koppelingen." })));
+}
+
 function viewAnalytics(days = 84) {
   state.page = "analytics";
   renderNav("analytics");
@@ -1796,14 +1863,14 @@ function viewAnalytics(days = 84) {
   show(
     h("div", { class: "page-heading row between" },
       h("div", null,
-        h("p", { class: "eyebrow", text: "ANALYSE" }),
-        h("h1", { text: "Training en herstel" }),
-        h("p", { class: "muted", text: "Berekend uit je activiteiten en, met een gekoppeld horloge, je nachtgegevens." })),
-      h("div", { class: "analytics-range", role: "group", "aria-label": "Periode" },
+        h("p", { class: "eyebrow", text: state.simple ? "JOUW WEEK" : "ANALYSE" }),
+        h("h1", { text: state.simple ? "Hoe gaat het met je?" : "Training en herstel" }),
+        h("p", { class: "muted", text: state.simple ? "Een korte samenvatting van je training en herstel." : "Berekend uit je activiteiten en, met een gekoppeld horloge, je nachtgegevens." })),
+      state.simple ? null : h("div", { class: "analytics-range", role: "group", "aria-label": "Periode" },
         ...ranges.map(([value, label]) => h("button", { type: "button", class: `range-btn${value === days ? " active" : ""}`, text: label, onclick: () => viewAnalytics(value) })))),
     body);
   api("GET", `/api/analytics?dagen=${days}`)
-    .then(data => renderAnalytics(body, data))
+    .then(data => (state.simple ? renderSimpleAnalytics(body, data) : renderAnalytics(body, data)))
     .catch(error => { clear(body); body.appendChild(h("p", { class: "error", text: error.message })); });
 }
 
@@ -1917,8 +1984,26 @@ function viewAccount() {
     }
   }});
   const loggedInName = h("strong", { text: state.user });
+  const simpleStatus = h("p", { class: "muted", role: "status" });
+  const simpleBox = h("input", { type: "checkbox", id: "simple-mode", checked: Boolean(state.simple) });
+  simpleBox.addEventListener("change", async () => {
+    simpleStatus.textContent = "Opslaan…";
+    try {
+      const result = await api("POST", "/api/account/simple", { eenvoudig: simpleBox.checked });
+      state.simple = result.eenvoudig;
+      simpleStatus.textContent = result.eenvoudig ? "Eenvoudige weergave staat aan." : "Eenvoudige weergave staat uit.";
+    } catch (error) {
+      simpleBox.checked = !simpleBox.checked;
+      simpleStatus.textContent = error.message;
+    }
+  });
   show(
     h("h1", { text: "Account" }),
+    h("section", { class: "card stack" },
+      h("h2", { text: "Eenvoudige weergave" }),
+      h("p", { class: "muted", text: "Haalt ingewikkelde cijfers en analyses weg en toont trainingszones in gewone woorden. De coach schrijft dan ook in eenvoudige taal. Handig voor jonge renners of als je liever geen cijfers ziet." }),
+      h("label", { class: "daybox", for: "simple-mode" }, simpleBox, h("span", { text: "Eenvoudige weergave gebruiken" })),
+      simpleStatus),
     h("section", { class: "card stack" },
       h("p", {}, "Ingelogd als ", loggedInName),
       h("p", {}, h("a", { class: "btn ghost", href: "/api/account/export", download: "wielerschema-gegevens.json", text: "Download mijn gegevens (JSON)" }))),
@@ -2009,7 +2094,9 @@ async function start() {
       state.user = me.username;
     }
     state.data = await api("GET", "/api/plan");
-    state.profile = (await api("GET", "/api/account/profile")).profile;
+    const account = await api("GET", "/api/account/profile");
+    state.profile = account.profile;
+    state.simple = Boolean(account.eenvoudig);
     try {
       const chat = await api("GET", "/api/coach/chat?global=1");
       const readAt = getCoachReadAt();

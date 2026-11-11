@@ -9,8 +9,8 @@
 
 const SESSION_DAYS = 30;
 const PBKDF2_ITERATIONS = 100000;      // maximum dat Cloudflare Workers toestaat
-const AI_PER_USER_PER_DAY = 100;       // verhoogd voor kleine groep, met daglimiet per account
-const AI_GLOBAL_PER_DAY = 2000;        // gezamenlijke noodrem
+const AI_PER_USER_PER_DAY = 15;        // past bij de gratis Groq-laag (circa 100 aanvragen per dag voor iedereen samen)
+const AI_GLOBAL_PER_DAY = 100;         // gezamenlijke rem; verhoog dit pas na een betaald Groq-account
 const REGISTER_PER_IP_PER_DAY = 10;
 const LOGIN_PER_IP_PER_DAY = 40;
 const LOGIN_PER_USER_PER_HOUR = 10;
@@ -406,6 +406,38 @@ function normalizeStoredWeek(week) {
 }
 
 // ---------- invoer controleren ----------
+// Een schema duurt maximaal 16 weken (standaard 8 zonder datum); doel en wedstrijden mogen tot 20 weken vooruit.
+const MAX_PLAN_WEEKS = 16;
+const DEFAULT_PLAN_WEEKS = 8;
+const MAX_HORIZON_DAYS = 140;
+const MAX_RACES = 4;
+const RACE_LABELS = { A: "hoofddoel", B: "belangrijk", C: "oefenwedstrijd" };
+function cleanRaces(raw) {
+  if (raw === undefined || raw === null || raw === "") return { races: [] };
+  if (!Array.isArray(raw)) return { error: "De wedstrijden kloppen niet." };
+  const races = [];
+  const seen = new Set();
+  for (const item of raw) {
+    const naam = cleanText(item?.naam, 80);
+    if (!naam && !item?.datum) continue;
+    if (!naam) return { error: "Geef elke wedstrijd een naam." };
+    if (!parseDate(item?.datum)) return { error: `De datum van "${naam}" klopt niet.` };
+    const days = daysBetween(today(), item.datum);
+    if (days < 7 || days > MAX_HORIZON_DAYS) return { error: `"${naam}" moet tussen 1 en 20 weken vooruit liggen.` };
+    if (seen.has(item.datum)) return { error: "Je hebt twee wedstrijden op dezelfde dag ingevuld." };
+    seen.add(item.datum);
+    races.push({ datum: item.datum, naam, prioriteit: RACE_LABELS[item.prioriteit] ? item.prioriteit : "B" });
+  }
+  if (races.length > MAX_RACES) return { error: `Je kunt maximaal ${MAX_RACES} wedstrijden invullen.` };
+  return { races: races.sort((a, b) => a.datum.localeCompare(b.datum)) };
+}
+// Datum waar het schema naartoe werkt: het ingevulde doel, anders de hoofdwedstrijd (A), anders de eerste wedstrijd.
+function targetDate(intake) {
+  if (intake.datum) return intake.datum;
+  const races = intake.wedstrijden || [];
+  return (races.find(r => r.prioriteit === "A") || races[0])?.datum || null;
+}
+
 function cleanIntake(raw) {
   if (!raw || typeof raw !== "object") return { error: "Vul het formulier in." };
   const doel = cleanText(raw.doel, 200);
@@ -422,14 +454,17 @@ function cleanIntake(raw) {
   if (raw.datum) {
     if (!parseDate(raw.datum)) return { error: "De datum van je doel klopt niet." };
     if (daysBetween(today(), raw.datum) < 7) return { error: "Je doel is binnen een week. Kies een latere datum of laat de datum leeg." };
+    if (daysBetween(today(), raw.datum) > MAX_HORIZON_DAYS) return { error: "Je doel ligt meer dan 20 weken weg. Kies een datum binnen 20 weken of laat de datum leeg; later maak je een nieuw schema." };
     datum = raw.datum;
   }
+  const cleanedRaces = cleanRaces(raw.wedstrijden);
+  if (cleanedRaces.error) return cleanedRaces;
   const cleanedProfile = cleanProfile(raw, raw.meter);
   if (cleanedProfile.error) return cleanedProfile;
   return {
     profile: cleanedProfile.profile,
     intake: {
-      doel, datum, niveau: raw.niveau, uren_per_week: uren, dagen, leeftijd: cleanedProfile.age,
+      doel, datum, wedstrijden: cleanedRaces.races, niveau: raw.niveau, uren_per_week: uren, dagen, leeftijd: cleanedProfile.age,
       meter: raw.meter,
       hr_max: cleanedProfile.profile.hr_max,
       hr_zones: cleanedProfile.profile.hr_zones,
@@ -449,8 +484,9 @@ function cleanAnswers(raw) {
 }
 
 function planWeeks(intake, start) {
-  if (!intake.datum) return 8;
-  return Math.min(16, Math.max(2, Math.floor(daysBetween(start, intake.datum) / 7) + 1));
+  const target = targetDate(intake);
+  if (!target) return DEFAULT_PLAN_WEEKS;
+  return Math.min(MAX_PLAN_WEEKS, Math.max(2, Math.floor(daysBetween(start, target) / 7) + 1));
 }
 
 // Maakt van het AI-antwoord een veilige, vaste week. Dit is de belangrijkste vangrail.
@@ -890,6 +926,7 @@ async function handleApi(request, env, url) {
   if (path.startsWith("/api/activities/") && method === "DELETE") return deleteActivity(env, user, decodeURIComponent(path.slice("/api/activities/".length)));
   if (path === "/api/account/profile" && method === "GET") return getAccountProfile(env, user);
   if (path === "/api/account/profile" && method === "POST") return saveAccountProfile(request, env, user);
+  if (path === "/api/account/simple" && method === "POST") return saveSimpleMode(request, env, user);
   if (path === "/api/account/credentials" && method === "POST") return updateCredentials(request, env, user);
   if (path === "/api/coach/chat" && method === "GET") return getCoachChat(url, env, user);
   if (path === "/api/coach/chat" && method === "POST") return coachChat(request, env, user);
@@ -1486,24 +1523,37 @@ async function createPlan(request, env, user) {
   const start = startMonday(today());
   const weeks = planWeeks(intake, start);
   const cap = intake.uren_per_week * 60 * 1.05;
+  const target = targetDate(intake);
+  const goalText = !target ? "" : daysBetween(start, target) < weeks * 7
+    ? ` Het hoofddoel is op ${target}; plan afbouw in de laatste week(en) ervoor.`
+    : ` Het hoofddoel is op ${target}, ná dit schema van ${weeks} weken (over ongeveer ${Math.ceil(daysBetween(start, target) / 7)} weken): bouw geleidelijk op en sluit af met een lichtere herstelweek, zonder al af te bouwen.`;
+  const races = intake.wedstrijden || [];
+  const racesInPlan = races.filter(r => daysBetween(start, r.datum) >= 0 && daysBetween(start, r.datum) < weeks * 7);
+  const raceText = races.length
+    ? ` Wedstrijden van de gebruiker: ${JSON.stringify(races)}. Plan op de wedstrijddag een training van type "race" met de wedstrijdnaam, ervoor rustigere dagen en erna extra herstel. A is het hoofddoel, B belangrijk en C een oefenwedstrijd die als zware training mag dienen.`
+    : "";
+  const week1Events = racesInPlan.filter(r => daysBetween(start, r.datum) < 7)
+    .map(r => ({ title: r.naam, event_type: "wedstrijd", event_date: r.datum, description: `Wedstrijd (${RACE_LABELS[r.prioriteit]})` }));
+  const keepSimple = await storedSimple(env, user.id);
+  const simpleNote = simpleNoteFor(keepSimple ?? (intake.leeftijd < 16));
   const prompt = `${intakeBlock(intake)}\n<antwoorden>${JSON.stringify(answers)}</antwoorden>\n` +
     `Gebruik ${intake.meter === "power" ? "vermogensgegevens" : intake.meter === "heart_rate" ? "hartslaggegevens" : intake.meter === "both" ? "zowel vermogens- als hartslaggegevens" : "geen vermogens- of hartslagmeter"} bij het kiezen van trainingszones. ` +
     `${zoneGuide(intake)} Geef per training ook "blokken": een lijst met de echte opeenvolgende intervalonderdelen {"minuten":10,"zone":"Z2","label":"..."}. De minuten van alle blokken tellen precies op tot de totale trainingsduur; bij een gelijkmatige duurtraining is dat één blok. ` +
     `Maak een trainingsschema van ${weeks} weken dat start op maandag ${start}.` +
-    (intake.datum ? ` Het doel is op ${intake.datum}; plan afbouw in de laatste week(en) ervoor.` : "") +
+    goalText + raceText +
     ` Geef: "samenvatting" (2 tot 3 korte zinnen uitleg over de opzet), "weken" (voor alle ${weeks} weken: {"week":1,"fase":"basis|opbouw|piek|afbouw|herstel","focus":"korte zin","uren":6.5}) en "week1" met de uitgewerkte eerste week. ` +
     `Formaat: {"samenvatting":"...","weken":[...],"week1":${WEEK_FORMAT}}. Dag 0 is maandag en dag 6 zondag. Geef in week1 voor elke dag een item, met type "rust" op rustdagen.`;
-  const r = await askValidated(env, prompt, 5000, (d) => ({
+  const r = await askValidated(env, prompt + simpleNote, 5000, (d) => ({
     summary: cleanCoachText(d.samenvatting, 600) || "Je schema is klaar.",
     outline: cleanOutline(d.weken, weeks, intake),
-    week: cleanWeek(d.week1, intake, cap)
+    week: cleanWeek(d.week1, intake, cap, week1Events)
   }));
   if (!r.value) return aiError(r);
 
   const now = Date.now();
   await env.DB.batch([
     env.DB.prepare("INSERT INTO account_profiles (user_id, profile, updated_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET profile = excluded.profile, updated_at = excluded.updated_at")
-      .bind(user.id, JSON.stringify(c.profile), now),
+      .bind(user.id, JSON.stringify({ ...c.profile, eenvoudig: keepSimple }), now),
     env.DB.prepare("DELETE FROM plan_events WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM weeks WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM plans WHERE user_id = ?").bind(user.id),
@@ -1512,9 +1562,12 @@ async function createPlan(request, env, user) {
     env.DB.prepare("INSERT INTO plans (user_id, intake, answers, outline, summary, start_date, total_weeks, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .bind(user.id, JSON.stringify(intake), JSON.stringify(answers), JSON.stringify(r.value.outline), r.value.summary, start, weeks, now),
     env.DB.prepare("INSERT INTO weeks (user_id, week_no, detail, checkin, created_at) VALUES (?, 1, ?, NULL, ?)")
-      .bind(user.id, JSON.stringify(r.value.week), now)
+      .bind(user.id, JSON.stringify(r.value.week), now),
+    // Wedstrijden binnen het schema komen als evenement in de planning (de volgende weken gebruiken die ook)
+    ...racesInPlan.map(race => env.DB.prepare("INSERT INTO plan_events (id, user_id, title, event_type, event_date, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(randomHex(12), user.id, race.naam, "wedstrijd", race.datum, `Wedstrijd (${RACE_LABELS[race.prioriteit]})`, now))
   ]);
-  log("plan_created", { weeks });
+  log("plan_created", { weeks, wedstrijden: races.length });
   return json(await loadPlan(env, user.id));
 }
 
@@ -1709,7 +1762,7 @@ async function coachChat(request, env, user) {
     `Gebruik de gekozen meter: ${intake.meter}; hartslag- en vermogenszones alleen als ze bekend zijn, verzin geen bpm, FTP of zones. ` +
     (checkinDue ? `De week is afgelopen en er is nog geen terugblik. Als de gebruiker nu vertelt hoeveel hij/zij heeft getraind en hoe het voelde, geef ook "week_feedback" met {"gedaan_pct":0-100,"uren_gedaan":getal of null,"gevoel":1-5,"klachten":true/false,"opmerking":"..."}. Gebruik alleen wat de gebruiker heeft verteld; als informatie ontbreekt, stel eerst een vraag en geef "week_feedback":null. ` : "Gebruik altijd \"week_feedback\":null. ") +
     `Als er geen trainingswijziging nodig is, gebruik "voorstel":null. Antwoord uitsluitend met JSON: {"antwoord":"...","voorstel":null,"week_feedback":null${eventRequest ? ',"evenement":{"titel":"...","type":"wedstrijd|toertocht|clubrit|anders","beschrijving":"..."},"schema_aanpassing":{"samenvatting":"...","weken":[{"week":1,"fase":"basis|opbouw|piek|afbouw|herstel","focus":"...","uren":6}]}' : ""}}.`;
-  const result = await askValidated(env, prompt, eventRequest ? 4000 : 1800, data => {
+  const result = await askValidated(env, prompt + simpleNoteFor(await simpleMode(env, user.id, intake.leeftijd)), eventRequest ? 4000 : 1800, data => {
     const antwoord = cleanCoachText(data.antwoord, 800) ||
       "Ik beschrijf de intensiteit in gewone taal en gebruik alleen de zones die je hebt ingesteld.";
     if (!antwoord) throw new Error("geen antwoord");
@@ -1934,7 +1987,7 @@ async function checkin(request, env, user) {
   const last = weeks[weeks.length - 1];
   const weekNo = Number(body.week_no);
   if (weekNo !== last.week_no) return json({ error: "stale", message: "Deze terugmelding hoort niet bij de laatste week. Ververs de pagina." }, 409);
-  if (last.week_no >= plan.total_weeks) return json({ error: "done", message: "Dit was de laatste week van je schema. Veel succes met je doel!" }, 409);
+  if (last.week_no >= plan.total_weeks) return json({ error: "done", message: "Dit was de laatste week van je schema. Veel succes! Komt er nog een wedstrijd of doel aan? Maak dan een nieuw schema." }, 409);
 
   const feedback = {
     gedaan_pct: Math.round(cleanNum(body.gedaan_pct, 0, 100) ?? -1),
@@ -1972,7 +2025,7 @@ async function checkin(request, env, user) {
     `was de week te zwaar, te weinig gedaan of voelde het slecht, ga dan lichter; ging het goed, bouw dan rustig verder volgens het overzicht.` +
     (feedback.klachten ? " De gebruiker meldt klachten: plan alleen rust en zeer rustige duurritten." : "") +
     ` Maximaal ${Math.floor(cap)} minuten in totaal. Formaat: {"uitleg":"2 korte zinnen waarom je dit zo plant","week":${WEEK_FORMAT}}.`;
-  const r = await askValidated(env, prompt, 3000, (d) => ({
+  const r = await askValidated(env, prompt + simpleNoteFor(await simpleMode(env, user.id, plan.intake.leeftijd)), 3000, (d) => ({
     uitleg: cleanCoachText(d.uitleg, 400),
     week: cleanWeek(d.week, plan.intake, cap, weekEvents)
   }));
@@ -1988,7 +2041,23 @@ async function checkin(request, env, user) {
   return json(await loadPlan(env, user.id));
 }
 
+const SIMPLE_NOTE = " Schrijf in eenvoudige taal voor iemand die niets van trainingscijfers weet: korte zinnen, geen vakjargon of afkortingen (zoals TSS, CTL, FTP, zones of watt) zonder uitleg.";
+const simpleNoteFor = (simple) => (simple ? SIMPLE_NOTE : "");
+// Opgeslagen keuze voor de eenvoudige weergave: true, false of null (nog niet gekozen: dan geldt jonger dan 16 = eenvoudig)
+async function storedSimple(env, userId) {
+  const row = await env.DB.prepare("SELECT profile FROM account_profiles WHERE user_id = ?").bind(userId).first();
+  if (!row) return null;
+  try { const v = JSON.parse(row.profile).eenvoudig; return typeof v === "boolean" ? v : null; } catch { return null; }
+}
+async function simpleMode(env, userId, age) {
+  const stored = await storedSimple(env, userId);
+  return stored ?? (Number.isFinite(age) && age < 16);
+}
 async function loadAccountProfile(env, user) {
+  const profile = await loadAccountProfileBase(env, user);
+  return { ...profile, eenvoudig: await storedSimple(env, user.id) };
+}
+async function loadAccountProfileBase(env, user) {
   const row = await env.DB.prepare("SELECT profile FROM account_profiles WHERE user_id = ?").bind(user.id).first();
   if (row) {
     const stored = JSON.parse(row.profile);
@@ -2016,7 +2085,21 @@ async function loadAccountProfile(env, user) {
 }
 
 async function getAccountProfile(env, user) {
-  return json({ username: user.username, profile: await loadAccountProfile(env, user) });
+  const profile = await loadAccountProfile(env, user);
+  const age = profile.birth_date ? userAge(profile.birth_date) : null;
+  return json({ username: user.username, profile, eenvoudig: profile.eenvoudig ?? (age !== null && age < 16) });
+}
+
+async function saveSimpleMode(request, env, user) {
+  const body = await readJson(request);
+  if (typeof body.eenvoudig !== "boolean") return json({ error: "invalid", message: "Kies aan of uit." }, 400);
+  const row = await env.DB.prepare("SELECT profile FROM account_profiles WHERE user_id = ?").bind(user.id).first();
+  let stored = {};
+  try { stored = row ? JSON.parse(row.profile) : {}; } catch {}
+  stored.eenvoudig = body.eenvoudig;
+  await env.DB.prepare("INSERT INTO account_profiles (user_id, profile, updated_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET profile = excluded.profile, updated_at = excluded.updated_at")
+    .bind(user.id, JSON.stringify(stored), Date.now()).run();
+  return json({ eenvoudig: body.eenvoudig });
 }
 
 async function saveAccountProfile(request, env, user) {
@@ -2026,7 +2109,7 @@ async function saveAccountProfile(request, env, user) {
   if (!METER_OPTIONS.includes(meter)) return json({ error: "meter", message: "Kies je gebruikte meetapparatuur." }, 400);
   const result = cleanProfile(raw, meter);
   if (result.error) return json({ error: "profile", message: result.error }, 400);
-  const profile = result.profile;
+  const profile = { ...result.profile, eenvoudig: await storedSimple(env, user.id) };
   const now = Date.now();
   const plan = await env.DB.prepare("SELECT intake FROM plans WHERE user_id = ?").bind(user.id).first();
   const statements = [
