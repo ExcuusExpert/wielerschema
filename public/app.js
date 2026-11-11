@@ -752,19 +752,43 @@ function viewActivities() {
         editName.focus();
         editName.select();
       }});
-      const deleteButton = h("button", { class: "btn ghost small danger-button", type: "button", text: "Verwijderen", onclick: async () => {
-        if (!window.confirm("Deze activiteit verwijderen?")) return;
-        try {
-          await api("DELETE", `/api/activities/${encodeURIComponent(activity.id)}`);
-          status.textContent = "Activiteit verwijderd.";
-          await loadActivities();
-        } catch (error) { status.textContent = error.message; }
-      }});
-      deleteButton.textContent = "🗑";
-      deleteButton.setAttribute("aria-label", `Verwijder ${activity.name || "deze activiteit"}`);
-      deleteButton.setAttribute("title", "Activiteit verwijderen");
-      deleteButton.className = "activity-delete";
-      heading.children[0].append(editNameButton, deleteButton);
+     const deleteButton = h("button", {
+  class: "btn ghost small danger-button",
+  type: "button",
+  onclick: async () => {
+    if (!window.confirm("Deze activiteit verwijderen?")) return;
+    try {
+      await api("DELETE", `/api/activities/${encodeURIComponent(activity.id)}`);
+      status.textContent = "Activiteit verwijderd.";
+      await loadActivities();
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  }
+});
+
+deleteButton.innerHTML = `
+  <svg xmlns="http://www.w3.org/2000/svg"
+       width="18" height="18"
+       viewBox="0 0 24 24"
+       fill="none"
+       stroke="currentColor"
+       stroke-width="2"
+       stroke-linecap="round"
+       stroke-linejoin="round">
+    <path d="M3 6h18"/>
+    <path d="M8 6V4h8v2"/>
+    <path d="M19 6l-1 14H6L5 6"/>
+    <path d="M10 11v6"/>
+    <path d="M14 11v6"/>
+  </svg>
+`;
+
+deleteButton.setAttribute("aria-label", `Verwijder ${activity.name || "deze activiteit"}`);
+deleteButton.setAttribute("title", "Activiteit verwijderen");
+deleteButton.className = "activity-delete";
+
+heading.children[0].append(editNameButton, deleteButton);
       const summaryMetrics = [
         Number.isFinite(duration) && duration > 0 ? minutesText(Math.round(duration / 60)) : "",
         Number.isFinite(distance) && distance > 0 ? `${(distance / 1000).toFixed(1)} km` : "",
