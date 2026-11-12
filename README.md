@@ -54,11 +54,11 @@ De code bevat worker-tests en een rooktest die de website tegen de worker draait
 1. Zet deze map in een nieuwe GitHub-repo (bijvoorbeeld `wielerschema`).
 2. Cloudflare, Workers & Pages, Create, **Import a repository**, kies de repo. Laat het buildcommando leeg; het deploy-commando is `npx wrangler deploy`.
 3. Na de eerste deploy: Settings, Variables and Secrets, voeg het secret **`GROQ_API_KEY`** toe (dezelfde sleutel als bij ExcuusExpert mag).
-4. Open het adres van de worker (eindigt op `.workers.dev`).
+4. Open het adres van de worker (eindigt op `.workers.dev`). De site draait ook op een eigen domein, https://wielerschema.me (in te stellen bij de worker onder Settings, Domains & Routes).
 
 ### Intervals.icu OAuth
 Maak eerst een goedgekeurde OAuth-app aan via Intervals.icu en gebruik als redirect-URL:
-`https://<jouw-worker>.workers.dev/api/intervals/callback`.
+`https://wielerschema.me/api/intervals/callback` (of het workers.dev-adres; `INTERVALS_REDIRECT_URI` moet exact dezelfde waarde hebben).
 Stel daarna deze secrets in:
 
 ```
@@ -87,7 +87,7 @@ node test/frontend-smoke.mjs   # rooktest van de website
 
 ## Eerst nog invullen of nakijken
 
-1. **Controleer de contactgegevens in `public/privacy.html`.** Controleer dat het opgegeven privacycontactadres klopt voordat je de site openbaar maakt.
+1. **Contactgegevens in `public/privacy.html`:** staat nu op hessel@wielerschema.me. Controleer dat dit adres bereikbaar is voordat je de site openbaar maakt.
 2. **Privacy en AVG.** De app verwerkt trainingsgegevens en mogelijk gezondheidsinformatie (klachten, beperkingen) van anderen en stuurt die naar Groq in de VS. Ik ben geen jurist, dus laat de privacyverklaring en je verplichtingen (zoals verwerkersafspraken met Cloudflare en Groq) nakijken, vooral omdat het openbaar is. Houd de invoer beperkt: velden voor klachten zijn optioneel.
 3. **Kosten en limieten van Groq.** Een chatbericht kost ongeveer 4.000 tot 5.000 tokens en een schema iets meer. De app begrenst op 15 AI-aanvragen per gebruiker per dag en 100 voor iedereen samen (zie bovenin `src/worker.js`). Controleer de limieten op console.groq.com/settings/limits.
 4. **Wachtwoord vergeten.** Zonder e-mail kan dat niet. Een goede volgende stap is inloggen met een e-maillink (via een dienst zoals Resend), ook handig voor eventuele meldingen.

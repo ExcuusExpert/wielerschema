@@ -804,6 +804,7 @@ function parseFit(bytes) {
 }
 
 async function listActivities(env, user) {
+  await maybeSyncIntervals(env, user.id);
   const rows = (await env.DB.prepare(
     "SELECT activity_id, activity_date, data FROM intervals_activities WHERE user_id = ? ORDER BY activity_date DESC, updated_at DESC LIMIT 100"
   ).bind(user.id).all()).results || [];
@@ -1017,9 +1018,63 @@ async function loadPlan(env, userId) {
     weeks: rows.map(r => ({ week_no: r.week_no, ...normalizeStoredWeek(JSON.parse(r.detail)), checkin: r.checkin ? JSON.parse(r.checkin) : null }))
   };
 }
+// ---------- automatisch synchroniseren met Intervals.icu ----------
+// Bij het openen van de app (als de laatste synchronisatie ouder is dan 15 minuten) en elk uur op de achtergrond (cron).
+const AUTO_SYNC_MAX_AGE_MS = 15 * 60 * 1000;
+const AUTO_SYNC_RETRY_MS = 2 * 60 * 1000;
+const AUTO_SYNC_TIMEOUT_MS = 6000;
+const CRON_SYNC_MAX_AGE_MS = 30 * 60 * 1000;
+const CRON_SYNC_BATCH = 8; // blijft onder de limiet van het aantal externe aanvragen per uitvoering
+const syncAttempts = new Map();
+async function maybeSyncIntervals(env, userId) {
+  try {
+    const connection = await env.DB.prepare("SELECT updated_at FROM intervals_connections WHERE user_id = ?").bind(userId).first();
+    if (!connection || Date.now() - connection.updated_at < AUTO_SYNC_MAX_AGE_MS) return;
+    if (Date.now() - (syncAttempts.get(userId) || 0) < AUTO_SYNC_RETRY_MS) return; // na een fout niet bij elke klik opnieuw proberen
+    syncAttempts.set(userId, Date.now());
+    let timer;
+    await Promise.race([
+      syncIntervals(env, userId, 7),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("timeout")), AUTO_SYNC_TIMEOUT_MS); })
+    ]).finally(() => clearTimeout(timer));
+  } catch (e) {
+    log("intervals_auto_sync_error", { msg: String(e && e.message || e).slice(0, 160) });
+  }
+}
+async function syncAllIntervals(env) {
+  const rows = (await env.DB.prepare("SELECT user_id FROM intervals_connections WHERE updated_at < ? ORDER BY updated_at ASC LIMIT ?")
+    .bind(Date.now() - CRON_SYNC_MAX_AGE_MS, CRON_SYNC_BATCH).all()).results || [];
+  let done = 0;
+  for (const row of rows) {
+    try { await syncIntervals(env, row.user_id, 7); done++; }
+    catch (e) { log("intervals_cron_sync_error", { msg: String(e && e.message || e).slice(0, 160) }); }
+  }
+  log("intervals_cron_sync", { gevonden: rows.length, gelukt: done });
+  return done;
+}
+
+// Dagen waarop al gefietst is (uit Intervals.icu of een FIT-import): voor het vinkje in de planning
+async function doneByDate(env, userId, startDate, totalWeeks) {
+  const endDate = addDays(startDate, totalWeeks * 7 - 1);
+  const rows = (await env.DB.prepare(
+    `SELECT activity_date AS d, COUNT(*) AS n,
+       SUM(COALESCE(json_extract(data, '$.moving_time'), json_extract(data, '$.elapsed_time'), 0)) AS secs
+     FROM intervals_activities
+     WHERE user_id = ? AND activity_date >= ? AND activity_date <= ?
+       AND (json_extract(data, '$.type') IS NULL OR LOWER(json_extract(data, '$.type')) LIKE '%ride%'
+         OR LOWER(json_extract(data, '$.type')) LIKE '%cycl%' OR LOWER(json_extract(data, '$.type')) LIKE '%bike%')
+     GROUP BY activity_date HAVING secs >= 600`
+  ).bind(userId, startDate, endDate).all()).results || [];
+  const done = {};
+  for (const row of rows) done[row.d] = { minuten: Math.round(row.secs / 60), aantal: row.n };
+  return done;
+}
+
 async function getPlan(env, user) {
+  await maybeSyncIntervals(env, user.id);
   const data = await loadPlan(env, user.id);
-  return json(data || { plan: null, weeks: [] });
+  if (!data) return json({ plan: null, weeks: [] });
+  return json({ ...data, gedaan: await doneByDate(env, user.id, data.plan.start_date, data.plan.total_weeks) });
 }
 
 async function intervalsConnection(env, userId) {
@@ -1170,11 +1225,11 @@ async function intervalsApi(env, connection, path) {
   return response.json();
 }
 
-async function syncIntervals(env, userId) {
+async function syncIntervals(env, userId, days = 30) {
   const connection = await env.DB.prepare("SELECT * FROM intervals_connections WHERE user_id = ?").bind(userId).first();
   if (!connection) return { activities: 0, wellness: 0 };
   const newest = today();
-  const oldest = addDays(newest, -30);
+  const oldest = addDays(newest, -days);
   const [activities, wellness] = await Promise.all([
     intervalsApi(env, connection, `/activities?oldest=${oldest}&newest=${newest}`),
     intervalsApi(env, connection, `/wellness?oldest=${oldest}&newest=${newest}`)
@@ -1369,6 +1424,7 @@ function activityLoad(a, intake) {
 }
 
 async function getAnalytics(url, env, user) {
+  await maybeSyncIntervals(env, user.id);
   const asked = Number(url.searchParams.get("dagen"));
   const range = ANALYSE_DAGEN.includes(asked) ? asked : 84;
   const end = today();
@@ -2229,5 +2285,10 @@ export default {
       log("error", { msg: String(e && e.message || e).slice(0, 200) });
       return json({ error: "server", message: "Er ging iets mis. Probeer het opnieuw." }, 500);
     }
+  },
+  // Cron (zie wrangler.toml): elk uur de Intervals.icu-gegevens van gekoppelde gebruikers bijwerken
+  async scheduled(event, env, ctx) {
+    const job = syncAllIntervals(env).catch(e => log("intervals_cron_error", { msg: String(e && e.message || e).slice(0, 160) }));
+    if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(job); else await job;
   }
 };

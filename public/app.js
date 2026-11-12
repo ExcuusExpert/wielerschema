@@ -1,6 +1,6 @@
 "use strict";
 
-/* WielerSchema frontend. Bewust zonder innerHTML: alle tekst gaat via textContent (veilig tegen XSS). */
+/* WielerSchema frontend. Tekst gaat via textContent (veilig tegen XSS). innerHTML wordt alleen gebruikt voor vaste SVG-iconen, nooit voor gebruikersinvoer. */
 
 const DAGEN_KORT = ["Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"];
 const TYPE_LABEL = {
@@ -742,80 +742,58 @@ function viewActivities() {
         } catch (error) { status.textContent = error.message; }
       };
       editName.addEventListener("blur", finishNameEdit);
-editName.addEventListener("keydown", event => {
-  if (event.key === "Enter") {
-    event.preventDefault();
-    editName.blur();
-  }
-  if (event.key === "Escape") {
-    editName.value = savedName;
-    editName.blur();
-  }
-});
+      editName.addEventListener("keydown", event => {
+        if (event.key === "Enter") { event.preventDefault(); editName.blur(); }
+        if (event.key === "Escape") { editName.value = savedName; editName.blur(); }
+      });
+      const editNameButton = h("button", {
+        class: "activity-edit",
+        type: "button",
+        "aria-label": `Wijzig naam van ${activity.name || "deze activiteit"}`,
+        title: "Naam wijzigen",
+        onclick: () => {
+          nameHeading.hidden = true;
+          editName.hidden = false;
+          editName.focus();
+          editName.select();
+        }
+      });
+      // Vaste SVG-iconen (geen gebruikersinvoer in innerHTML)
+      editNameButton.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 20h9"/>
+          <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"/>
+        </svg>
+      `;
 
-const editNameButton = h("button", {
-  class: "activity-edit",
-  type: "button",
-  "aria-label": `Wijzig naam van ${activity.name || "deze activiteit"}`,
-  title: "Naam wijzigen",
-  onclick: () => {
-    nameHeading.hidden = true;
-    editName.hidden = false;
-    editName.focus();
-    editName.select();
-  }
-});
+      const deleteButton = h("button", {
+        class: "btn ghost small danger-button",
+        type: "button",
+        onclick: async () => {
+          if (!window.confirm("Deze activiteit verwijderen?")) return;
+          try {
+            await api("DELETE", `/api/activities/${encodeURIComponent(activity.id)}`);
+            status.textContent = "Activiteit verwijderd.";
+            await loadActivities();
+          } catch (error) {
+            status.textContent = error.message;
+          }
+        }
+      });
+      deleteButton.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 6h18"/>
+          <path d="M8 6V4h8v2"/>
+          <path d="M19 6l-1 14H6L5 6"/>
+          <path d="M10 11v6"/>
+          <path d="M14 11v6"/>
+        </svg>
+      `;
+      deleteButton.setAttribute("aria-label", `Verwijder ${activity.name || "deze activiteit"}`);
+      deleteButton.setAttribute("title", "Activiteit verwijderen");
+      deleteButton.className = "activity-delete";
 
-editNameButton.innerHTML = `
-  <svg xmlns="http://www.w3.org/2000/svg"
-       width="18" height="18"
-       viewBox="0 0 24 24"
-       fill="none"
-       stroke="currentColor"
-       stroke-width="2"
-       stroke-linecap="round"
-       stroke-linejoin="round">
-    <path d="M12 20h9"/>
-    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"/>
-  </svg>
-`;
-     const deleteButton = h("button", {
-  class: "btn ghost small danger-button",
-  type: "button",
-  onclick: async () => {
-    if (!window.confirm("Deze activiteit verwijderen?")) return;
-    try {
-      await api("DELETE", `/api/activities/${encodeURIComponent(activity.id)}`);
-      status.textContent = "Activiteit verwijderd.";
-      await loadActivities();
-    } catch (error) {
-      status.textContent = error.message;
-    }
-  }
-});
-
-deleteButton.innerHTML = `
-  <svg xmlns="http://www.w3.org/2000/svg"
-       width="18" height="18"
-       viewBox="0 0 24 24"
-       fill="none"
-       stroke="currentColor"
-       stroke-width="2"
-       stroke-linecap="round"
-       stroke-linejoin="round">
-    <path d="M3 6h18"/>
-    <path d="M8 6V4h8v2"/>
-    <path d="M19 6l-1 14H6L5 6"/>
-    <path d="M10 11v6"/>
-    <path d="M14 11v6"/>
-  </svg>
-`;
-
-deleteButton.setAttribute("aria-label", `Verwijder ${activity.name || "deze activiteit"}`);
-deleteButton.setAttribute("title", "Activiteit verwijderen");
-deleteButton.className = "activity-delete";
-
-heading.children[0].append(editNameButton, deleteButton);
+      heading.children[0].append(editNameButton, deleteButton);
       const summaryMetrics = [
         Number.isFinite(duration) && duration > 0 ? minutesText(Math.round(duration / 60)) : "",
         Number.isFinite(distance) && distance > 0 ? `${(distance / 1000).toFixed(1)} km` : "",
@@ -941,7 +919,7 @@ function viewConnections() {
   renderNav("connections");
   const status = h("p", { class: "integration-status", role: "status", text: "Status laden…" });
   const connect = h("button", { class: "btn", type: "button", text: "Koppel Intervals.icu" });
-  const sync = h("button", { class: "btn ghost", type: "button", text: "Gegevens nu ophalen", hidden: true });
+  const sync = h("button", { class: "btn ghost", type: "button", text: "Nu bijwerken", hidden: true });
   const disconnect = h("button", { class: "btn ghost", type: "button", text: "Koppeling verbreken", hidden: true });
   const details = h("p", { class: "hint" });
   const refresh = async () => {
@@ -979,7 +957,7 @@ function viewConnections() {
     h("div", { class: "page-heading" },
       h("p", { class: "eyebrow", text: "ACTIVITEITEN AUTOMATISEREN" }),
       h("h1", { text: "Koppelingen" }),
-      h("p", { class: "muted", text: "Bekijk hier de status van koppelingen voor het automatisch ophalen van je trainingen." })),
+      h("p", { class: "muted", text: "Bekijk hier de status van koppelingen. Gekoppelde gegevens worden automatisch bijgewerkt wanneer je de app opent en elk uur op de achtergrond." })),
     h("section", { class: "card garmin-card stack" },
       h("div", { class: "garmin-heading" },
         h("span", { class: "garmin-mark", "aria-hidden": "true" }, "G"),
@@ -1278,12 +1256,14 @@ function trainingPeaksPrompt(plan, dag) {
 
 function dayCard(plan, week, dag) {
   const date = addDays(plan.start_date, (week.week_no - 1) * 7 + dag.dag);
-  const article = h("article", { class: `day ${dag.type === "rust" ? "rest" : `t-${dag.type}`}` },
+  const done = dag.type === "rust" ? null : state.data?.gedaan?.[date];
+  const article = h("article", { class: `day ${dag.type === "rust" ? "rest" : `t-${dag.type}`}${done ? " is-done" : ""}` },
     h("h4", { text: `${DAGEN_KORT[dag.dag]} ${dateLabel(date).split(" ").slice(1).join(" ")}` }),
     dag.type === "rust" ? h("p", { class: "muted", text: "Rust" }) : h("div", {},
       h("p", { class: "badge", text: `${TYPE_LABEL[dag.type] || dag.type}${dag.zone ? " · " + zoneShown(dag.zone) : ""}` }),
       h("p", { class: "dur", text: minutesText(dag.minuten) }),
-      h("p", { class: "dtitle", text: dag.titel })),
+      h("p", { class: "dtitle", text: dag.titel }),
+      done ? h("p", { class: "day-done", text: `✓ Gedaan · ${minutesText(done.minuten)}` }) : null),
     h("button", {
       class: "btn ghost small day-details-button", type: "button", text: "Details / aanpassen",
       "aria-label": `Bekijk details van ${DAGEN_KORT[dag.dag]}: ${dag.titel || "rust"}`,
@@ -1971,10 +1951,15 @@ function renderAnalytics(body, a) {
         analyticsStat("HRV", night.hrv?.waarde != null ? `${nl(night.hrv.waarde)} ms` : "–", night.hrv ? `${signed(night.hrv.verschil)} t.o.v. gemiddeld` : ""),
         analyticsStat("Rusthartslag", night.rhr?.waarde != null ? `${nl(night.rhr.waarde)} bpm` : "–", night.rhr ? `${signed(night.rhr.verschil)} t.o.v. gemiddeld` : ""),
         analyticsStat("Slaapschuld", `${nl(night.slaapschuld_uren, 1)} u`, "laatste 4 nachten")),
-      h("div", { class: "night-bars", role: "img", "aria-label": "Slaapduur van de laatste nachten" },
-        ...night.nachten.map(n => h("div", { class: "night-bar" },
-          h("div", { class: "night-bar-fill", style: `height:${Math.min(100, Math.round(n.uren / 10 * 100))}%`, title: `${hoursText(n.uren)}` }),
-          h("span", { class: "muted small-text", text: DAGEN_KORT[(new Date(`${n.d}T00:00:00Z`).getUTCDay() + 6) % 7] }))))
+      h("div", { class: "night-bars", role: "img", "aria-label": `Slaapduur van de laatste nachten: ${night.nachten.map(n => `${dateLabel(n.d)} ${hoursText(n.uren)}`).join(", ")}` },
+        ...night.nachten.map(n => {
+          const scale = Math.max(night.slaapdoel_uren, ...night.nachten.map(x => x.uren)) * 1.1;
+          return h("div", { class: "night-bar" },
+            h("span", { class: "night-bar-value", text: nl(n.uren, 1) }),
+            h("div", { class: "night-bar-track" },
+              h("div", { class: `night-bar-fill${n.uren >= night.slaapdoel_uren - 0.5 ? " night-ok" : ""}`, style: `height:${Math.max(3, Math.round(n.uren / scale * 100))}%`, title: hoursText(n.uren) })),
+            h("span", { class: "muted small-text", text: DAGEN_KORT[(new Date(`${n.d}T00:00:00Z`).getUTCDay() + 6) % 7] }));
+        }))
     ] : h("p", { class: "muted", text: "Nog geen slaapgegevens. Draag je horloge ’s nachts en koppel het via Koppelingen (Intervals.icu): dan zie je hier slaap, HRV en rusthartslag." }));
 
   body.append(

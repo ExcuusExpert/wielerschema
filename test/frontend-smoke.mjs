@@ -148,7 +148,7 @@ ok(styles.includes(".coach-launcher-button { position: fixed; right: 18px") &&
   styles.includes("width: 44px; height: 44px"),
   "coachknop staat rechts en is compacter gemaakt");
 const privacyHtml = fs.readFileSync("public/privacy.html", "utf8");
-ok(privacyHtml.includes("wielerschema@outlook.com") && privacyHtml.includes("geen medisch advies") &&
+ok(privacyHtml.includes("hessel@wielerschema.me") && privacyHtml.includes("geen medisch advies") &&
   privacyHtml.includes("ouder/verzorger") && !privacyHtml.includes("VUL_HIER_JE_CONTACTGEGEVENS_IN"),
   "privacyverklaring bevat contactgegevens en de uitgebreide gebruiksinformatie");
 ok((fs.readFileSync("public/index.html", "utf8").match(/class="brand-logo" src="logo\.png"/g) || []).length === 2 &&
