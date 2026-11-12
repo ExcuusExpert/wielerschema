@@ -396,6 +396,32 @@ function viewAuth(mode = "login") {
   show(h("button", { class: "link home-back", type: "button", text: "← Terug naar startpagina", onclick: viewHome }), form);
 }
 
+// Zelfde inhoud als in index.html, zodat die ook na het laden van de pagina zichtbaar blijft (goed voor zoekmachines)
+const LANDING_FEATURES = [
+  "Een persoonlijk trainingsschema van maximaal 16 weken, met per week de trainingen op de dagen die jij kunt.",
+  "Wedstrijden en doelen inplannen, met rustigere dagen ervoor en extra herstel erna.",
+  "Trainingen met hartslag- of vermogenszones en een visueel verloop per training.",
+  "Een AI-coach in een doorlopende chat; wijzigingen worden pas toegepast als jij ze bevestigt.",
+  "Analyse van fitness, vermoeidheid, vorm en herstel, met je nachtgegevens als je horloge gekoppeld is.",
+  "Een eenvoudige weergave zonder ingewikkelde cijfers, handig voor jonge renners.",
+];
+const LANDING_FAQ = [
+  ["Hoe maakt WielerSchema mijn trainingsschema?", "Je vult je doel, beschikbare tijd en trainingservaring in. De AI-coach stelt een paar vervolgvragen en maakt daarna een overzicht van alle weken en een uitgewerkte eerste week. Elke week meld je terug hoe het ging, waarna de coach de volgende week maakt."],
+  ["Is het ook geschikt voor jeugdrenners?", "Ja. Voor renners van 12 tot 18 jaar houdt de coach rekening met leeftijd, herstel en plezier. Bespreek het gebruik en het schema met je ouder/verzorger en een gekwalificeerde jeugdtrainer."],
+  ["Kan ik wedstrijden invullen?", "Ja, tot vier wedstrijden of evenementen tot 20 weken vooruit. Een schema duurt maximaal 16 weken."],
+  ["Werkt het met mijn horloge of fietscomputer?", "Je kunt FIT-bestanden importeren en Intervals.icu koppelen. Zo komen ook je activiteiten, slaap, HRV en rusthartslag binnen. Directe Garmin- en Wahoo-koppelingen zijn nog niet beschikbaar."],
+  ["Is dit medisch advies?", "Nee. De schema's zijn algemene trainingssuggesties die met AI zijn gemaakt en vervangen geen arts, fysiotherapeut of gekwalificeerde trainer. Stop met trainen bij pijn of andere klachten."],
+  ["Wat gebeurt er met mijn gegevens?", "Je gegevens blijven aan je account gekoppeld en je kunt ze downloaden of verwijderen. Lees de ", h("a", { href: "privacy.html" }, "privacyverklaring"), "."]
+];
+function landingInfo() {
+  return [
+    h("section", { class: "landing-info" }, h("h2", { text: "Wat kun je met WielerSchema?" }), h("ul", {}, ...LANDING_FEATURES.map(text => h("li", { text })))),
+    h("section", { class: "landing-info" }, h("h2", { text: "Voor wie is WielerSchema?" }), h("p", { text: "WielerSchema is voor beginnende, gevorderde en ervaren wielrenners op de weg, en voor jeugdrenners van 12 tot 18 jaar." })),
+    h("section", { class: "landing-info faq" }, h("h2", { text: "Veelgestelde vragen" }),
+      ...LANDING_FAQ.map(([question, ...answer]) => h("details", {}, h("summary", { text: question }), h("p", {}, ...answer))))
+  ];
+}
+
 function viewHome() {
   state.user = null;
   state.data = null;
@@ -425,7 +451,8 @@ function viewHome() {
         h("p", { text: "Gebruik de chat om vragen te stellen en bekijk coachvoorstellen voordat je ze toepast." }))),
     h("section", { class: "landing-integrations" },
       h("h2", { text: "Koppelingen" }),
-      h("p", { text: "Garmin- en Wahoo-koppelingen worden voorbereid. Automatische synchronisatie werkt pas zodra officiële API-toegang beschikbaar is." }))
+      h("p", { text: "Garmin- en Wahoo-koppelingen worden voorbereid. Automatische synchronisatie werkt pas zodra officiële API-toegang beschikbaar is." })),
+    ...landingInfo()
   );
 }
 

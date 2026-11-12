@@ -17,6 +17,7 @@ const LOGIN_PER_USER_PER_HOUR = 10;
 const MAX_BODY_CHARS = 20000;
 const MAX_FIT_BYTES = 10 * 1024 * 1024;
 const GROQ_TIMEOUT_MS = 40000;
+const CANONICAL_HOST = "wielerschema.me";
 const MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile"];
 // Gratis Groq-laag: tokens per minuut per model (invoer + gevraagde uitvoer tellen samen).
 // Controleer de echte waarden op console.groq.com/settings/limits en pas ze zo nodig aan.
@@ -2276,6 +2277,10 @@ async function deleteCoachMessages(env, user) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    // Eén vast adres voor zoekmachines: paginaverzoeken op het workers.dev-adres gaan door naar het eigen domein
+    if (url.hostname.endsWith(".workers.dev") && (request.method === "GET" || request.method === "HEAD")) {
+      return Response.redirect(`https://${CANONICAL_HOST}${url.pathname}${url.search}`, 301);
+    }
     if (!url.pathname.startsWith("/api/")) {
       return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Niet gevonden", { status: 404 });
     }

@@ -419,3 +419,12 @@ input[type=text], input[type=password], input[type=number], input[type=date], se
 .night-bar-value { font-size: .75rem; font-weight: 650; color: var(--muted); }
 .night-bar-track { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; min-height: 0; }
 .night-bar-fill.night-ok { background: #7fb069; }
+
+/* ---------- startpagina-inhoud (ook voor zoekmachines) ---------- */
+.landing-info { max-width: 760px; margin: 30px 0; }
+.landing-info h2 { margin: 0 0 10px; letter-spacing: -.02em; }
+.landing-info ul { margin: 0; padding-left: 1.2rem; display: grid; gap: 6px; }
+.faq details { border-bottom: 1px solid var(--line); padding: 10px 0; }
+.faq summary { cursor: pointer; font-weight: 650; }
+.faq details p { margin: 8px 0 0; color: var(--muted); }
+.noscript-note { color: var(--muted); }
