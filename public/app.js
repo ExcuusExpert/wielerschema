@@ -418,7 +418,8 @@ function landingInfo() {
     h("section", { class: "landing-info" }, h("h2", { text: "Wat kun je met WielerSchema?" }), h("ul", {}, ...LANDING_FEATURES.map(text => h("li", { text })))),
     h("section", { class: "landing-info" }, h("h2", { text: "Voor wie is WielerSchema?" }), h("p", { text: "WielerSchema is voor beginnende, gevorderde en ervaren wielrenners op de weg, en voor jeugdrenners van 12 tot 18 jaar." })),
     h("section", { class: "landing-info faq" }, h("h2", { text: "Veelgestelde vragen" }),
-      ...LANDING_FAQ.map(([question, ...answer]) => h("details", {}, h("summary", { text: question }), h("p", {}, ...answer))))
+      ...LANDING_FAQ.map(([question, ...answer]) => h("details", {}, h("summary", { text: question }), h("p", {}, ...answer)))),
+    newsletterSection()
   ];
 }
 
@@ -1281,6 +1282,65 @@ function trainingPeaksPrompt(plan, dag) {
   ].join("\n");
 }
 
+// ---------- intervaltimer (timer.wielerschema.me) ----------
+const TIMER_URL = "https://timer.wielerschema.me/";
+const NEWSLETTER_URL = "https://zcv2-zcmp.maillist-manage.eu/ua/Optin?od=12ba7f55a5c5&zx=14af523bae&tD=143a7e7cf7d6e921&sD=143a7e7cf7d6fd26";
+function base64UrlEncode(text) {
+  let binary = "";
+  new TextEncoder().encode(text).forEach(byte => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+// Zone omgezet naar het bereik uit je profiel, bijv. "271–295 W" (in de eenvoudige weergave: een gewoon woord)
+function zoneInstruction(intake, zone) {
+  const level = Number((zone || "").slice(1));
+  if (!level) return "";
+  if (state.simple) return ZONE_WOORDEN[zone] || "";
+  let limits, unit;
+  if (["power", "both"].includes(intake.meter) && intake.ftp) {
+    const count = intake.power_zone_count === 5 ? 5 : 7;
+    limits = validPowerLimits(intake.power_zones, count) || defaultPowerZones(intake.ftp, count);
+    unit = "W";
+  } else if (["heart_rate", "both"].includes(intake.meter) && intake.hr_max) {
+    limits = intake.hr_zones?.length === 5 ? intake.hr_zones : defaultHrZones(intake.hr_max);
+    unit = "bpm";
+  } else return "";
+  const upper = limits[level - 1];
+  if (level === 1) return `≤ ${upper} ${unit}`;
+  if (upper === undefined) return level === limits.length + 1 ? `> ${limits[level - 2]} ${unit}` : "";
+  return `${limits[level - 2] + 1}–${upper} ${unit}`;
+}
+function timerLink(plan, dag) {
+  if (dag.type === "rust") return null;
+  const blocks = workoutProfileBlocks(dag, plan.intake);
+  if (blocks.length < 2) return null; // een gelijkmatige training zonder blokken heeft geen timer nodig
+  const payload = {
+    v: 1,
+    titel: String(dag.titel || TYPE_LABEL[dag.type] || "Training").slice(0, 80),
+    schematisch: workoutZoneBlocks(dag, plan.intake).length < 2,
+    blokken: blocks.map((block, index) => ({
+      naam: String(block.label || `Blok ${index + 1}`).slice(0, 40),
+      seconden: Math.round(block.minuten * 60),
+      zone: block.zone || "",
+      instructie: zoneInstruction(plan.intake, block.zone)
+    }))
+  };
+  return { url: `${TIMER_URL}?w=${base64UrlEncode(JSON.stringify(payload))}`, schematic: payload.schematisch };
+}
+function timerButton(plan, dag) {
+  const link = timerLink(plan, dag);
+  if (!link) return null;
+  return h("div", { class: "timer-action stack" },
+    h("a", { class: "btn timer-button", href: link.url, target: "_blank", rel: "noopener", text: "⏱️ Time met Timer" }),
+    h("p", { class: "hint", text: "Geen fietscomputer? Met je telefoon in je zak geeft de timer met spraak, piepjes en trillen aan wat je moet doen." }),
+    link.schematic ? h("p", { class: "hint", text: "De blokken zijn een schematische opbouw. Controleer ze in de timer." }) : null);
+}
+function newsletterSection() {
+  return h("section", { class: "landing-info newsletter" },
+    h("h2", { text: "Blijf op de hoogte" }),
+    h("p", { text: "Ontvang af en toe een update over nieuwe functies en trainingstips. Je kunt je altijd weer afmelden." }),
+    h("iframe", { class: "newsletter-frame", src: NEWSLETTER_URL, title: "Aanmelden voor de WielerSchema-nieuwsbrief", loading: "lazy", width: "100%", height: "460" }));
+}
+
 function dayCard(plan, week, dag) {
   const date = addDays(plan.start_date, (week.week_no - 1) * 7 + dag.dag);
   const done = dag.type === "rust" ? null : state.data?.gedaan?.[date];
@@ -1389,7 +1449,8 @@ function openWorkoutDetails(plan, week, dag) {
         h("span", { class: "badge", text: `${TYPE_LABEL[dag.type] || dag.type}${dag.zone ? " · " + zoneShown(dag.zone) : ""}` }),
         h("strong", { text: minutesText(dag.minuten) }),
         h("p", { text: dag.beschrijving || "Geen extra beschrijving." }),
-        workoutProfile(dag, plan.intake)),
+        workoutProfile(dag, plan.intake),
+        timerButton(plan, dag)),
     editButton,
     dag.type !== "rust" ? h("details", { class: "optional-trainingpeaks" },
       h("summary", { text: "Optioneel: gebruiken in TrainingPeaks AI" }),
@@ -2145,7 +2206,8 @@ function viewAccount() {
     , h("section", { class: "card stack" },
       h("h2", { text: "Coachgesprekken" }),
       h("p", { class: "muted", text: "Verwijder je opgeslagen chatberichten met de coach. Je trainingsschema blijft staan." }),
-      chatDeleteButton, chatDeleteStatus)
+      chatDeleteButton, chatDeleteStatus),
+    newsletterSection()
   );
 }
 

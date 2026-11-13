@@ -428,3 +428,8 @@ input[type=text], input[type=password], input[type=number], input[type=date], se
 .faq summary { cursor: pointer; font-weight: 650; }
 .faq details p { margin: 8px 0 0; color: var(--muted); }
 .noscript-note { color: var(--muted); }
+
+/* ---------- timerknop en nieuwsbrief ---------- */
+.timer-action { margin-top: 12px; }
+.timer-button { display: inline-block; text-decoration: none; text-align: center; }
+.newsletter-frame { width: 100%; height: 460px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }

@@ -122,6 +122,8 @@ const sandbox = {
   }
 };
 sandbox.window.confirm = sandbox.confirm;
+sandbox.TextEncoder = TextEncoder;
+sandbox.btoa = btoa;
 vm.createContext(sandbox);
 
 const tick = () => new Promise(r => setTimeout(r, 80));
@@ -292,6 +294,12 @@ ok(intervalSegments.length === 5 &&
   zoneHeights[1] > zoneHeights[2] && zoneHeights[2] > zoneHeights[0] &&
   text().includes("De blokken volgen de trainingsopbouw uit het schema."),
   "handmatig ingestelde warming-up, intervallen en herstel zijn zichtbaar in het zoneprofiel");
+const timerLink = find(root.app, e => e.tagName === "A" && e.textContent === "⏱️ Time met Timer")[0];
+const timerPayload = timerLink && JSON.parse(Buffer.from(timerLink.attrs.href.split("?w=")[1], "base64url").toString("utf8"));
+ok(timerLink && timerLink.attrs.href.startsWith("https://timer.wielerschema.me/?w=") && timerLink.attrs.target === "_blank" &&
+  timerPayload.blokken.length === 5 && timerPayload.blokken.every(block => block.seconden > 0 && block.seconden % 60 === 0 && "naam" in block && "zone" in block && "instructie" in block) &&
+  typeof timerPayload.titel === "string",
+  "intervaltraining toont de knop Time met Timer met een geldige, gecodeerde training");
 find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Kopieer prompt voor TrainingPeaks AI")[0].click();
 await tick();
 ok(sandbox.copiedText.includes("Duration: 70 minuten") &&
