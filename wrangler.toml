@@ -2,6 +2,8 @@
 name = "wielerschema"
 main = "src/worker.js"
 compatibility_date = "2025-09-01"
+# Variabelen die je in het dashboard instelt (zoals TIKKIE_URL) blijven staan bij een nieuwe deploy
+keep_vars = true
 
 [assets]
 directory = "./public"
@@ -15,3 +17,7 @@ database_id = "473ee21f-147c-4a06-ab49-624acfa80cbb"
 # Workers Logs: zie in het dashboard hoe vaak schema's mislukken, de AI bezet is, enz. (zonder persoonsgegevens)
 [observability]
 enabled = true
+
+# Elk uur de Intervals.icu-gegevens van gekoppelde gebruikers automatisch bijwerken
+[triggers]
+crons = ["0 * * * *"]

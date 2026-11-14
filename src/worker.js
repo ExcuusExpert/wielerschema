@@ -18,6 +18,14 @@ const MAX_BODY_CHARS = 20000;
 const MAX_FIT_BYTES = 10 * 1024 * 1024;
 const GROQ_TIMEOUT_MS = 40000;
 const CANONICAL_HOST = "wielerschema.me";
+// Steunlink (bijv. Tikkie): staat in Cloudflare als variabele TIKKIE_URL en is makkelijk te vervangen. Alleen https en bekende betaaldiensten.
+const SUPPORT_HOSTS = ["tikkie.me", "bunq.me", "paypal.me", "ko-fi.com", "buymeacoffee.com"];
+function supportUrl(env) {
+  try {
+    const url = new URL(String(env.TIKKIE_URL || "").trim());
+    return url.protocol === "https:" && SUPPORT_HOSTS.includes(url.hostname) ? url.href : null;
+  } catch { return null; }
+}
 const MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile"];
 // Gratis Groq-laag: tokens per minuut per model (invoer + gevraagde uitvoer tellen samen).
 // Controleer de echte waarden op console.groq.com/settings/limits en pas ze zo nodig aan.
@@ -904,6 +912,7 @@ async function handleApi(request, env, url) {
     if (origin && origin !== url.origin) return json({ error: "origin" }, 403);
   }
 
+  if (path === "/api/support" && method === "GET") return json({ url: supportUrl(env) }, 200, { "Cache-Control": "public, max-age=300" });
   if (path === "/api/register" && method === "POST") return register(request, env);
   if (path === "/api/login" && method === "POST") return login(request, env);
   if (path === "/api/intervals/callback" && method === "GET") return intervalsCallback(request, env);

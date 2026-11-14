@@ -442,3 +442,9 @@ input[type=text], input[type=password], input[type=number], input[type=date], se
 /* ---------- subtiele partnerlink ---------- */
 .partner, .partner a { font-size: .8rem; color: var(--muted); }
 .partner a { text-decoration: underline; }
+
+/* ---------- steun en uitleg bij de partnerlink ---------- */
+.support-card h2 { margin: 0; }
+.info-btn { width: 18px; height: 18px; padding: 0; border: 1px solid var(--muted); border-radius: 50%; background: transparent; color: var(--muted); font-size: .7rem; font-weight: 700; line-height: 1; cursor: pointer; vertical-align: middle; }
+.partner-info { display: block; max-width: 420px; margin: 8px auto 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--muted); font-size: .8rem; line-height: 1.4; text-align: left; }
+.partner-info[hidden] { display: none; }

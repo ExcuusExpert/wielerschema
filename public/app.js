@@ -296,6 +296,40 @@ function busyButton(button, message, statusEl) {
 }
 
 // ---------- menu ----------
+// ---------- steun (vrijwillige bijdrage) ----------
+const supportCards = [];
+const supportLabel = () => (/tikkie\.me/.test(state.supportUrl || "") ? "☕ Steun via Tikkie" : "☕ Steun WielerSchema");
+function applySupport() {
+  const link = document.getElementById("support-link");
+  if (link) { link.hidden = !state.supportUrl; if (state.supportUrl) link.href = state.supportUrl; }
+  for (const card of supportCards) {
+    card.hidden = !state.supportUrl;
+    if (state.supportUrl) { card.button.href = state.supportUrl; card.button.textContent = supportLabel(); }
+  }
+}
+async function loadSupport() {
+  try { state.supportUrl = (await api("GET", "/api/support")).url || ""; } catch { state.supportUrl = ""; }
+  applySupport();
+}
+function supportCard() {
+  const button = h("a", { class: "btn", target: "_blank", rel: "noopener", href: state.supportUrl || "#", text: supportLabel() });
+  const card = h("section", { class: "card stack support-card", hidden: !state.supportUrl },
+    h("h2", { text: "Vind je WielerSchema handig?" }),
+    h("p", { text: "Houd het gratis & zonder banners 🚴‍♂️ Geen abonnementen en geen irritante banners. Met een vrijwillige bijdrage (via Tikkie) help je de server en AI-coach draaiende te houden." }),
+    h("div", { class: "row" }, button));
+  card.button = button;
+  supportCards.push(card);
+  if (supportCards.length > 20) supportCards.splice(0, supportCards.length - 20);
+  return card;
+}
+function initFooter() {
+  const button = document.getElementById("partner-info-btn"), info = document.getElementById("partner-info");
+  if (button && info) button.addEventListener("click", () => {
+    info.hidden = !info.hidden;
+    button.setAttribute("aria-expanded", String(!info.hidden));
+  });
+}
+
 // Partnerlink (bol.com): niet tonen aan ingelogde gebruikers onder de 18
 function applyPartnerLink() {
   const link = document.getElementById("partner-link");
@@ -469,6 +503,7 @@ function viewHome() {
     h("section", { class: "landing-integrations" },
       h("h2", { text: "Koppelingen" }),
       h("p", { text: "Garmin- en Wahoo-koppelingen worden voorbereid. Automatische synchronisatie werkt pas zodra officiële API-toegang beschikbaar is." })),
+    supportCard(),
     ...landingInfo()
   );
 }
@@ -1947,6 +1982,7 @@ function viewPlan(keepScroll) {
       h("p", { class: "muted", text: "Vertel je coach in de chat wat je hebt getraind en hoe het voelde. Dan maakt die je volgende week." }),
       h("button", { class: "btn", type: "button", text: "Vertel het aan je coach", onclick: viewCoach })) : null,
     finished ? h("p", { class: "card", text: "Dit was de laatste week van je schema. Veel succes met je doel!" }) : null,
+    supportCard(),
     h("p", { class: "muted" },
       h("button", { class: "link", type: "button", text: "Nieuw schema beginnen",
         onclick: async () => {
@@ -2305,12 +2341,14 @@ function viewAccount() {
       h("h2", { text: "Coachgesprekken" }),
       h("p", { class: "muted", text: "Verwijder je opgeslagen chatberichten met de coach. Je trainingsschema blijft staan." }),
       chatDeleteButton, chatDeleteStatus),
+    supportCard(),
     newsletterSection()
   );
 }
 
 // ---------- start ----------
 async function start() {
+  loadSupport();
   try {
     if (!state.user) {
       const me = await api("GET", "/api/me");
@@ -2338,6 +2376,7 @@ async function start() {
   }
 }
 
+initFooter();
 start();
 
 if ("serviceWorker" in navigator) {
