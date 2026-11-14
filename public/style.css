@@ -432,7 +432,7 @@ input[type=text], input[type=password], input[type=number], input[type=date], se
 /* ---------- timerknop en nieuwsbrief ---------- */
 .timer-action { margin-top: 12px; }
 .timer-button { display: inline-block; text-decoration: none; text-align: center; }
-.newsletter-frame { width: 100%; height: 180px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.newsletter-frame { width: 100%; height: 160px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
 
 /* ---------- komende 14 dagen ---------- */
 .day.today { box-shadow: 0 0 0 2px var(--accent); }
