@@ -235,6 +235,10 @@ ok(!text().includes("Jeugdrenner: train met begeleiding") && !text().includes("a
 ok(find(root.app, e => e.className.includes("day")).length >= 7, "zeven dagkaarten");
 ok(!find(root.app, e => e.className.includes("week-visual-day")).length &&
   !text().includes("Hoeveel uur per dag"), "oude weekbalkjes en uren-per-daggrafiek zijn verwijderd");
+ok(text().includes("Komende 14 dagen") && find(root.app, e => e.tagName === "ARTICLE" && e.className.split(" ").includes("day")).length === 14,
+  "standaard toont het schema de komende 14 dagen");
+find(root.app, e => e.tagName === "LI" && e.className.includes("clickable"))[0].listeners.click[0]();
+ok(text().includes("← Komende 14 dagen") && !text().includes("Eerste 7 dagen"), "een week uit het overzicht toont de losse week");
 const shareButton = find(root.app, e => e.tagName === "BUTTON" && e.textContent === "Deel schema als afbeelding")[0];
 await shareButton.listeners.click[0]({ preventDefault() {} });
 ok(downloads.includes("wielerschema-week-1.png") && text().includes("Afbeelding gedownload."),

@@ -296,7 +296,23 @@ function busyButton(button, message, statusEl) {
 }
 
 // ---------- menu ----------
+// Partnerlink (bol.com): niet tonen aan ingelogde gebruikers onder de 18
+function applyPartnerLink() {
+  const link = document.getElementById("partner-link");
+  if (!link) return;
+  const born = state.user && state.profile && state.profile.birth_date;
+  let minor = false;
+  if (born) {
+    const birth = new Date(born + "T00:00:00Z"), now = new Date();
+    let age = now.getUTCFullYear() - birth.getUTCFullYear();
+    if (now.getUTCMonth() < birth.getUTCMonth() || (now.getUTCMonth() === birth.getUTCMonth() && now.getUTCDate() < birth.getUTCDate())) age--;
+    minor = age < 18;
+  }
+  link.hidden = minor;
+}
+
 function renderNav(activePage = state.page) {
+  applyPartnerLink();
   clear(nav);
   clear(sidebarAccount);
   clear(coachLauncher);
@@ -1092,27 +1108,34 @@ async function createPlan(intake, answers, errorEl, statusEl) {
   setCoachWaiting(statusEl, "De coach maakt je schema. Dit duurt ongeveer een halve minuut…");
   const data = await api("POST", "/api/plan/create", { intake, answers });
   state.data = data;
-  state.week = data.weeks[data.weeks.length - 1].week_no;
+  state.mode = "rolling";
+  state.extendError = "";
   viewPlan();
 }
 
 // ---------- schema ----------
 function icsEscape(text) { return String(text).replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n"); }
 function downloadIcs(plan, week) {
+  const items = week.dagen.map(dag => ({ date: addDays(plan.start_date, (week.week_no - 1) * 7 + dag.dag), weekNo: week.week_no, dag }));
+  icsDownload(items, `wielerschema-week-${week.week_no}.ics`);
+}
+function downloadIcsRolling(plan, entries) {
+  icsDownload(entries.filter(e => e.workout).map(e => ({ date: e.date, weekNo: e.weekNo, dag: e.workout })), "wielerschema-komende-14-dagen.ics");
+}
+function icsDownload(items, filename) {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z";
   const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//WielerSchema//NL", "CALSCALE:GREGORIAN"];
-  for (const dag of week.dagen) {
+  for (const { date, weekNo, dag } of items) {
     if (dag.type === "rust") continue;
-    const date = addDays(plan.start_date, (week.week_no - 1) * 7 + dag.dag);
-    const compact = (s) => s.replace(/-/g, "");
+    const compact = (value) => value.replace(/-/g, "");
     const desc = `${TYPE_LABEL[dag.type] || dag.type}, ${minutesText(dag.minuten)}${dag.zone ? ", " + zoneShown(dag.zone) : ""}. ${dag.beschrijving}`;
-    lines.push("BEGIN:VEVENT", `UID:wielerschema-${compact(date)}-${week.week_no}-${dag.dag}@wielerschema`, `DTSTAMP:${stamp}`,
+    lines.push("BEGIN:VEVENT", `UID:wielerschema-${compact(date)}-${weekNo}-${dag.dag}@wielerschema`, `DTSTAMP:${stamp}`,
       `DTSTART;VALUE=DATE:${compact(date)}`, `DTEND;VALUE=DATE:${compact(addDays(date, 1))}`,
       `SUMMARY:${icsEscape("Fietstraining: " + dag.titel)}`, `DESCRIPTION:${icsEscape(desc)}`, "END:VEVENT");
   }
   lines.push("END:VCALENDAR");
   const blob = new Blob([lines.join("\r\n")], { type: "text/calendar" });
-  const a = h("a", { href: URL.createObjectURL(blob), download: `wielerschema-week-${week.week_no}.ics` });
+  const a = h("a", { href: URL.createObjectURL(blob), download: filename });
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -1592,14 +1615,83 @@ function workoutEditor(plan, week, dag, error, status, onCancel) {
   return editor;
 }
 
-function checkinIsDue(plan, week) {
-  return week.week_no < plan.total_weeks && !week.checkin &&
-    todayIso() >= addDays(plan.start_date, week.week_no * 7);
+// ---------- schema dat altijd twee weken vooruit loopt ----------
+function planWeekOf(plan, iso) {
+  const off = dateOffset(plan.start_date, iso);
+  return { off, weekNo: Math.floor(off / 7) + 1, dag: ((off % 7) + 7) % 7 };
+}
+function neededWeekNo(plan) {
+  return Math.min(plan.total_weeks, Math.max(1, planWeekOf(plan, addDays(todayIso(), 13)).weekNo));
+}
+// De terugblik hoort bij de laatste bevestigde week (voorlopige weken tellen niet mee)
+function dueCheckinWeek(plan, weeks) {
+  const confirmed = weeks.filter(w => !w.voorlopig);
+  const week = confirmed[confirmed.length - 1];
+  return week && !week.checkin && week.week_no < plan.total_weeks && todayIso() >= addDays(plan.start_date, week.week_no * 7) ? week : null;
+}
+function weekForToday(plan, weeks) {
+  const no = Math.min(plan.total_weeks, Math.max(1, planWeekOf(plan, todayIso()).weekNo));
+  return weeks.find(w => w.week_no === no) || weeks[weeks.length - 1];
+}
+// Maakt ontbrekende weken één voor één klaar (elke week is een eigen aanvraag aan de coach)
+async function ensureHorizon() {
+  if (state.extending || state.extendError || !state.data?.plan) return;
+  const missing = () => state.data.weeks[state.data.weeks.length - 1].week_no < neededWeekNo(state.data.plan);
+  if (!missing()) return;
+  state.extending = true;
+  if (state.page === "plan") viewPlan(true);
+  try {
+    while (missing()) {
+      const before = state.data.weeks.length;
+      state.data = await api("POST", "/api/plan/extend", {});
+      if (state.data.weeks.length <= before) break;
+      if (state.page === "plan") viewPlan(true);
+    }
+  } catch (error) { state.extendError = error.message; }
+  state.extending = false;
+  if (state.page === "plan") viewPlan(true);
+}
+function rollingSection(plan, weeks) {
+  const today = todayIso();
+  const dates = Array.from({ length: 14 }, (_, n) => addDays(today, n));
+  const entries = dates.map(date => {
+    const { off, weekNo, dag } = planWeekOf(plan, date);
+    const week = off >= 0 && weekNo <= plan.total_weeks ? weeks.find(w => w.week_no === weekNo) : null;
+    return { date, off, weekNo, week, workout: week ? week.dagen.find(d => d.dag === dag) : null };
+  });
+  const label = date => `${DAGEN_KORT[(new Date(`${date}T00:00:00Z`).getUTCDay() + 6) % 7]} ${dateLabel(date).split(" ").slice(1).join(" ")}`;
+  const card = entry => {
+    if (entry.workout) {
+      const el = dayCard(plan, entry.week, entry.workout);
+      if (entry.date === today) el.classList.add("today");
+      if (entry.week.voorlopig) el.classList.add("is-provisional");
+      return el;
+    }
+    const text = entry.off < 0 ? "Voor de start" : entry.weekNo > plan.total_weeks ? "Einde van het schema"
+      : state.extending ? "Wordt gemaakt…" : "Nog niet gemaakt";
+    return h("article", { class: "day rest" }, h("h4", { text: label(entry.date) }), h("p", { class: "muted", text }));
+  };
+  const total = slice => minutesText(slice.reduce((sum, e) => sum + (e.workout && e.workout.type !== "rust" ? e.workout.minuten : 0), 0));
+  return h("section", { class: "stack" },
+    h("div", { class: "row between" },
+      h("h2", { text: "Komende 14 dagen" }),
+      h("div", { class: "row week-actions" },
+        h("button", { class: "btn ghost small", type: "button", text: "Download agenda (.ics)", onclick: () => downloadIcsRolling(plan, entries) }))),
+    h("p", { class: "muted", text: `${dateLabel(dates[0])} t/m ${dateLabel(dates[13])}. Je schema loopt altijd twee weken vooruit. Dagen met “voorlopig” stelt de coach nog bij na je weekterugblik.` }),
+    state.extending ? h("p", { class: "muted", role: "status", text: "De coach maakt je komende weken klaar…" }) : null,
+    state.extendError ? h("div", { class: "stack" },
+      h("p", { class: "error", role: "alert", text: state.extendError }),
+      h("button", { class: "btn ghost small", type: "button", text: "Opnieuw proberen", onclick: () => { state.extendError = ""; ensureHorizon(); } })) : null,
+    h("p", { class: "muted", text: `Eerste 7 dagen: ${total(entries.slice(0, 7))}` }),
+    h("div", { class: "days-grid" }, ...entries.slice(0, 7).map(card)),
+    h("p", { class: "muted", text: `Daarna: ${total(entries.slice(7))}` }),
+    h("div", { class: "days-grid" }, ...entries.slice(7).map(card)));
 }
 
 function coachChat(plan, currentWeek) {
   const defaultDay = (new Date(`${todayIso()}T00:00:00Z`).getUTCDay() + 6) % 7;
-  const checkinDue = checkinIsDue(plan, currentWeek);
+  const dueWeek = dueCheckinWeek(plan, state.data.weeks);
+  const checkinDue = Boolean(dueWeek);
   const messages = h("div", { class: "chat", "aria-live": "polite", "aria-relevant": "additions text" });
   const error = h("p", { class: "error", role: "alert" });
   const status = h("p", { class: "muted", role: "status" });
@@ -1664,7 +1756,7 @@ function coachChat(plan, currentWeek) {
     }
     if (checkinDue && !thinking) messages.appendChild(h("div", { class: "chat-message coach" },
       h("span", { class: "chat-label", text: "WielerSchema-coach" }),
-      h("p", { class: "chat-bubble checkin-bubble", text: `Hoe ging week ${currentWeek.week_no}? Heb je kunnen trainen, en hoe voelde het? Vertel het gewoon in je eigen woorden; dan maak ik je volgende week passend.` })));
+      h("p", { class: "chat-bubble checkin-bubble", text: `Hoe ging week ${dueWeek ? dueWeek.week_no : currentWeek.week_no}? Heb je kunnen trainen, en hoe voelde het? Vertel het gewoon in je eigen woorden; dan maak ik je volgende week passend.` })));
     if (thinking) messages.appendChild(h("div", { class: "chat-message coach", role: "status" },
       h("span", { class: "chat-label", text: "WielerSchema-coach" }),
       h("div", { class: "chat-bubble coach-thinking" },
@@ -1723,7 +1815,7 @@ function coachChat(plan, currentWeek) {
         input.value = "";
         state.coachDraft = "";
         state.data = await api("GET", "/api/plan");
-        state.week = state.data.weeks[state.data.weeks.length - 1].week_no;
+        state.mode = "rolling";
         if (reply.plan_updated) status.textContent = "Je volgende trainingsweek staat klaar.";
         viewCoach(true);
       } catch (e) {
@@ -1774,13 +1866,16 @@ function viewCoach(preserveScroll = false) {
   if (preserveScroll) window.scrollTo(0, scrollY);
 }
 
-function viewPlan() {
+function viewPlan(keepScroll) {
+  const scrollY = window.scrollY;
   state.page = "plan";
   renderNav("plan");
   if (!state.data || !state.data.plan) return viewIntake();
   const { plan, weeks } = state.data;
-  const week = weeks.find(w => w.week_no === state.week) || weeks[weeks.length - 1];
-  const last = weeks[weeks.length - 1];
+  const rolling = state.mode !== "week";
+  const nowWeek = weekForToday(plan, weeks);
+  const week = rolling ? nowWeek : (weeks.find(w => w.week_no === state.week) || nowWeek);
+  const dueWeek = dueCheckinWeek(plan, weeks);
 
   const outline = h("ol", { class: "outline", "aria-label": "Overzicht van alle weken" },
     ...plan.outline.map(o => {
@@ -1792,7 +1887,7 @@ function viewPlan() {
         el.classList.add("clickable");
         el.setAttribute("tabindex", "0");
         el.setAttribute("role", "button");
-        const go = () => { state.week = o.week; viewPlan(); };
+        const go = () => { state.week = o.week; state.mode = "week"; viewPlan(); };
         el.addEventListener("click", go);
         el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
       }
@@ -1800,8 +1895,7 @@ function viewPlan() {
     }));
 
   const outlineItem = plan.outline.find(o => o.week === week.week_no);
-  const isLast = week.week_no === last.week_no;
-  const finished = isLast && week.week_no >= plan.total_weeks;
+  const finished = dateOffset(plan.start_date, todayIso()) >= plan.total_weeks * 7;
   const shareStatus = h("p", { class: "muted", role: "status", "aria-live": "polite" });
   const shareButton = h("button", {
     class: "btn ghost small", type: "button", text: "Deel schema als afbeelding",
@@ -1817,6 +1911,18 @@ function viewPlan() {
     }
   });
 
+  const backButton = h("button", { class: "btn ghost small", type: "button", text: "← Komende 14 dagen", onclick: () => { state.mode = "rolling"; viewPlan(); } });
+  const weekBlock = h("section", { class: "stack" },
+      h("div", { class: "row between" },
+        h("h2", { text: `Week ${week.week_no}${outlineItem && outlineItem.focus ? ": " + outlineItem.focus : ""}` }),
+        h("div", { class: "row week-actions" },
+          h("button", { class: "btn ghost small", type: "button", text: "Download agenda (.ics)", onclick: () => downloadIcs(plan, week) }),
+          shareButton)),
+      shareStatus,
+      week.uitleg ? h("p", { class: "muted", text: week.uitleg }) : null,
+      h("p", { class: "muted", text: `Totaal ${minutesText(week.totaal_minuten)}` }),
+      h("div", { class: "days-grid" }, ...week.dagen.map(d => dayCard(plan, week, d))),
+      week.tips ? h("p", { class: "tip", text: "Tip: " + week.tips }) : null);
   show(
     h("div", { class: "dashboard-heading" },
       h("p", { class: "eyebrow", text: "JOUW TRAININGSDASHBOARD" }),
@@ -1834,20 +1940,10 @@ function viewPlan() {
         event.description ? h("p", { class: "muted", text: event.description }) : null))) : null,
     week.waarschuwing ? h("p", { class: "warn", role: "alert", text: week.waarschuwing }) : null,
     week.weekbelasting_waarschuwing ? h("p", { class: "load-warning", role: "status", text: week.weekbelasting_waarschuwing }) : null,
-    h("section", { class: "stack" },
-      h("div", { class: "row between" },
-        h("h2", { text: `Week ${week.week_no}${outlineItem && outlineItem.focus ? ": " + outlineItem.focus : ""}` }),
-        h("div", { class: "row week-actions" },
-          h("button", { class: "btn ghost small", type: "button", text: "Download agenda (.ics)", onclick: () => downloadIcs(plan, week) }),
-          shareButton)),
-      shareStatus,
-      week.uitleg ? h("p", { class: "muted", text: week.uitleg }) : null,
-      h("p", { class: "muted", text: `Totaal ${minutesText(week.totaal_minuten)}` }),
-      h("div", { class: "days-grid" }, ...week.dagen.map(d => dayCard(plan, week, d))),
-      week.tips ? h("p", { class: "tip", text: "Tip: " + week.tips }) : null),
-    isLast && !finished && checkinIsDue(plan, week) ? h("section", { class: "card stack week-checkin-prompt" },
+    rolling ? rollingSection(plan, weeks) : [backButton, weekBlock],
+    dueWeek && !finished ? h("section", { class: "card stack week-checkin-prompt" },
       h("p", { class: "eyebrow", text: "WEEKTERUGBLIK" }),
-      h("h3", { text: `Hoe ging week ${week.week_no}?` }),
+      h("h3", { text: `Hoe ging week ${dueWeek.week_no}?` }),
       h("p", { class: "muted", text: "Vertel je coach in de chat wat je hebt getraind en hoe het voelde. Dan maakt die je volgende week." }),
       h("button", { class: "btn", type: "button", text: "Vertel het aan je coach", onclick: viewCoach })) : null,
     finished ? h("p", { class: "card", text: "Dit was de laatste week van je schema. Veel succes met je doel!" }) : null,
@@ -1860,6 +1956,8 @@ function viewPlan() {
           viewIntake(plan.intake);
         } }))
   );
+  if (keepScroll === true) window.scrollTo(0, scrollY);
+  if (rolling && !finished) setTimeout(ensureHorizon, 0);
 }
 
 // ---------- racekop op de planpagina ----------
@@ -2230,7 +2328,7 @@ async function start() {
       ).length;
     } catch {}
     if (state.data.plan) {
-      state.week = state.data.weeks[state.data.weeks.length - 1].week_no;
+      state.mode = "rolling";
       state.page = "plan";
       viewPlan();
     } else viewIntake();
