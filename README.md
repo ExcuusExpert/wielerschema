@@ -6,7 +6,7 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 
 ## Wat kan het nu
 
-- Account maken en inloggen (gebruikersnaam en wachtwoord, geen e-mail nodig).
+- Account maken en inloggen (gebruikersnaam en wachtwoord; een e-mailadres is optioneel en alleen voor later wachtwoordherstel).
 - Publieke startpagina met uitleg en aparte keuzes om in te loggen of een account te maken.
 - Intakewizard in drie stappen: doel, geboortedatum, niveau en wedstrijden; trainingstijd en dagen; meetapparatuur, beperkingen en overige trainingservaring.
 - Doel en wedstrijden (maximaal 4) mogen tot 20 weken vooruit. Een schema duurt maximaal 16 weken (8 weken zonder datum); wedstrijden binnen het schema komen in de planning.
@@ -30,7 +30,7 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 - Onder Account kun je je geboortedatum, meetapparatuur en trainingszones aanpassen, je gebruikersnaam of wachtwoord wijzigen, je gegevens downloaden en je account verwijderen.
 - Privacyverklaring.
 
-Nog niet: wachtwoord vergeten (er is geen e-mail), automatische koppelingen met Garmin, Strava of Wahoo. Intervals.icu vereist OAuth-secrets en een goedgekeurde app.
+Nog niet: wachtwoord vergeten via e-mail (het e-mailadres wordt wel al, optioneel, bewaard), automatische koppelingen met Garmin, Strava of Wahoo. Intervals.icu vereist OAuth-secrets en een goedgekeurde app.
 
 ## Veiligheid en vangrails
 
@@ -90,7 +90,7 @@ node test/frontend-smoke.mjs   # rooktest van de website
 1. **Contactgegevens in `public/privacy.html`:** staat nu op hessel@wielerschema.me. Controleer dat dit adres bereikbaar is voordat je de site openbaar maakt.
 2. **Privacy en AVG.** De app verwerkt trainingsgegevens en mogelijk gezondheidsinformatie (klachten, beperkingen) van anderen en stuurt die naar Groq in de VS. Ik ben geen jurist, dus laat de privacyverklaring en je verplichtingen (zoals verwerkersafspraken met Cloudflare en Groq) nakijken, vooral omdat het openbaar is. Houd de invoer beperkt: velden voor klachten zijn optioneel.
 3. **Kosten en limieten van Groq.** Een chatbericht kost ongeveer 4.000 tot 5.000 tokens en een schema iets meer. De app begrenst op 15 AI-aanvragen per gebruiker per dag en 100 voor iedereen samen (zie bovenin `src/worker.js`). Controleer de limieten op console.groq.com/settings/limits.
-4. **Wachtwoord vergeten.** Zonder e-mail kan dat niet. Een goede volgende stap is inloggen met een e-maillink (via een dienst zoals Resend), ook handig voor eventuele meldingen.
+4. **Wachtwoord vergeten.** Het e-mailadres wordt bij het aanmaken van een account (optioneel) bewaard in de tabel `user_emails`. De herstelmail zelf is nog niet gebouwd; daarvoor is een mailservice nodig (bijvoorbeeld Resend, met `hessel@wielerschema.me` als afzender).
 5. **Opmaak en teksten** zijn een eerste opzet. Kijk of de toon en de vragen van de coach bij je doelgroep passen.
 
 ## Mogelijke vervolgstappen

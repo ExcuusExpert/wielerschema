@@ -44,6 +44,9 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS users (
      id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, salt TEXT NOT NULL, hash TEXT NOT NULL,
      created_at INTEGER NOT NULL, consent_at INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS user_emails (
+     user_id TEXT PRIMARY KEY, email TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS user_emails_email ON user_emails (email)`,
   `CREATE TABLE IF NOT EXISTS account_profiles (
      user_id TEXT PRIMARY KEY, profile TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS sessions (
@@ -102,6 +105,24 @@ const SYSTEM_COACH =
   "Antwoord uitsluitend met één geldig JSON-object, zonder tekst eromheen.";
 
 // ---------- hulpfuncties ----------
+// Optioneel e-mailadres, alleen bedoeld om later het wachtwoord te kunnen herstellen
+function cleanEmail(raw) {
+  if (raw === undefined || raw === null || raw === "") return { email: "" };
+  if (typeof raw !== "string") return { error: "Dit e-mailadres klopt niet." };
+  const email = raw.trim().toLowerCase();
+  if (!email) return { email: "" };
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return { error: "Dit e-mailadres klopt niet. Controleer het of laat het leeg." };
+  return { email };
+}
+async function emailOf(env, userId) {
+  const row = await env.DB.prepare("SELECT email FROM user_emails WHERE user_id = ?").bind(userId).first();
+  return row ? row.email : "";
+}
+async function saveEmail(env, userId, email) {
+  if (!email) { await env.DB.prepare("DELETE FROM user_emails WHERE user_id = ?").bind(userId).run(); return; }
+  await env.DB.prepare("INSERT INTO user_emails (user_id, email, updated_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET email = excluded.email, updated_at = excluded.updated_at")
+    .bind(userId, email, Date.now()).run();
+}
 function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
@@ -925,7 +946,7 @@ async function handleApi(request, env, url) {
   }
   if (!user) return json({ error: "unauthorized" }, 401);
 
-  if (path === "/api/me" && method === "GET") return json({ username: user.username });
+  if (path === "/api/me" && method === "GET") return json({ username: user.username, email: await emailOf(env, user.id) });
   if (path === "/api/intervals/status" && method === "GET") return intervalsStatus(env, user);
   if (path === "/api/intervals/connect" && method === "GET") return intervalsConnect(env, user, request);
   if (path === "/api/intervals/sync" && method === "POST") return intervalsSync(request, env, user);
@@ -972,6 +993,8 @@ async function register(request, env) {
   if (!/^[a-z0-9._-]{3,30}$/.test(username)) return json({ error: "username", message: "Kies een gebruikersnaam van 3 tot 30 tekens (letters, cijfers, punt, streepje of underscore)." }, 400);
   if (password.length < 10 || password.length > 200) return json({ error: "password", message: "Kies een wachtwoord van minstens 10 tekens." }, 400);
   if (body.consent !== true) return json({ error: "consent", message: "Je moet akkoord gaan met de privacyverklaring." }, 400);
+  const emailResult = cleanEmail(body.email);
+  if (emailResult.error) return json({ error: "email", message: emailResult.error }, 400);
 
   const ip = await ipHash(env, request);
   if (!(await hit(env, `reg:${ip}:${today()}`, REGISTER_PER_IP_PER_DAY))) return json({ error: "rate", message: "Er zijn vandaag te veel accounts gemaakt vanaf dit netwerk. Probeer het morgen opnieuw." }, 429);
@@ -985,6 +1008,7 @@ async function register(request, env) {
   } catch {
     return json({ error: "taken", message: "Deze gebruikersnaam is al in gebruik." }, 409);
   }
+  if (emailResult.email) await saveEmail(env, id, emailResult.email);
   await cleanup(env);
   const token = await createSession(env, id);
   log("register");
@@ -2262,8 +2286,12 @@ async function updateCredentials(request, env, user) {
   const currentPassword = typeof body.current_password === "string" ? body.current_password.slice(0, 200) : "";
   const username = typeof body.username === "string" ? body.username.trim().toLowerCase() : user.username;
   const newPassword = typeof body.new_password === "string" ? body.new_password : "";
-  if (username === user.username && !newPassword) {
-    return json({ error: "unchanged", message: "Vul een nieuwe gebruikersnaam of een nieuw wachtwoord in." }, 400);
+  const emailResult = typeof body.email === "string" ? cleanEmail(body.email) : null;
+  if (emailResult && emailResult.error) return json({ error: "email", message: emailResult.error }, 400);
+  const currentEmail = await emailOf(env, user.id);
+  const emailChanged = Boolean(emailResult) && emailResult.email !== currentEmail;
+  if (username === user.username && !newPassword && !emailChanged) {
+    return json({ error: "unchanged", message: "Pas een gebruikersnaam, e-mailadres of wachtwoord aan om op te slaan." }, 400);
   }
   if (!/^[a-z0-9._-]{3,30}$/.test(username)) {
     return json({ error: "username", message: "Kies een gebruikersnaam van 3 tot 30 tekens (letters, cijfers, punt, streepje of underscore)." }, 400);
@@ -2281,11 +2309,13 @@ async function updateCredentials(request, env, user) {
   if (existing) return json({ error: "taken", message: "Deze gebruikersnaam is al in gebruik." }, 409);
   await env.DB.prepare("UPDATE users SET username = ?, salt = ?, hash = ? WHERE id = ?")
     .bind(username, salt, hash, user.id).run();
-  if (!newPassword) return json({ username });
+  if (emailChanged) await saveEmail(env, user.id, emailResult.email);
+  const email = emailChanged ? emailResult.email : currentEmail;
+  if (!newPassword) return json({ username, email });
 
   await env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.id).run();
   const token = await createSession(env, user.id);
-  return json({ username }, 200, { "Set-Cookie": sessionCookie(token, SESSION_DAYS * 86400) });
+  return json({ username, email }, 200, { "Set-Cookie": sessionCookie(token, SESSION_DAYS * 86400) });
 }
 
 async function exportAccount(env, user) {
@@ -2299,6 +2329,7 @@ async function exportAccount(env, user) {
   const intervals = await intervalsContext(env, user.id);
   return json({
     gebruikersnaam: user.username,
+    email: await emailOf(env, user.id) || null,
     profiel: profile,
     account_aangemaakt: new Date(row.created_at).toISOString(),
     toestemming_gegeven: new Date(row.consent_at).toISOString(),
@@ -2326,6 +2357,7 @@ async function deleteAccount(request, env, user) {
     env.DB.prepare("DELETE FROM intervals_oauth_states WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM account_profiles WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM user_emails WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id)
   ]);
   log("account_deleted");

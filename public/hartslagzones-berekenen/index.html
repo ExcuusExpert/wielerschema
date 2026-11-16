@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hartslagzones berekenen voor wielrennen | WielerSchema</title>
+  <meta name="description" content="Bereken je hartslagzones voor wielrennen op basis van je maximale hartslag of met Karvonen. Direct je zones, met uitleg en een trainingsschema op maat.">
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <meta name="theme-color" content="#f5f7f5">
+  <link rel="canonical" href="https://wielerschema.me/hartslagzones-berekenen/">
+  <link rel="icon" href="/logo.png" type="image/png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/tools.css">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="nl_NL">
+  <meta property="og:site_name" content="WielerSchema">
+  <meta property="og:title" content="Hartslagzones berekenen voor wielrennen | WielerSchema">
+  <meta property="og:description" content="Bereken je hartslagzones voor wielrennen op basis van je maximale hartslag of met Karvonen. Direct je zones, met uitleg en een trainingsschema op maat.">
+  <meta property="og:url" content="https://wielerschema.me/hartslagzones-berekenen/">
+  <meta property="og:image" content="https://wielerschema.me/og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Hartslagzones berekenen voor wielrennen | WielerSchema">
+  <meta name="twitter:description" content="Bereken je hartslagzones voor wielrennen op basis van je maximale hartslag of met Karvonen. Direct je zones, met uitleg en een trainingsschema op maat.">
+  <meta name="twitter:image" content="https://wielerschema.me/og-image.png">
+  <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebApplication", "name": "Hartslagzones berekenen", "url": "https://wielerschema.me/hartslagzones-berekenen/", "applicationCategory": "SportsApplication", "operatingSystem": "Alle apparaten met een browser", "inLanguage": "nl", "isAccessibleForFree": true, "publisher": {"@type": "Organization", "name": "WielerSchema", "url": "https://wielerschema.me"}}</script>
+  <script type="application/ld+json">{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "WielerSchema", "item": "https://wielerschema.me/"}, {"@type": "ListItem", "position": 2, "name": "Hartslagzones berekenen", "item": "https://wielerschema.me/hartslagzones-berekenen/"}]}</script>
+</head>
+<body data-calc="hr">
+  <header class="site-header">
+    <div class="inner">
+      <a href="/" aria-label="WielerSchema startpagina"><img src="/logo.png" width="76" height="38" alt="WielerSchema"></a>
+      <nav class="site-nav" aria-label="Hoofdmenu">
+        <a href="/hartslagzones-berekenen/" aria-current="page">Hartslagzones</a>
+        <a href="/ftp-zones-berekenen/" >FTP-zones</a>
+        <a class="btn small" href="/">Naar WielerSchema</a>
+      </nav>
+    </div>
+  </header>
+  <main class="wrap">
+    <p class="crumbs"><a href="/">WielerSchema</a> › Hartslagzones berekenen</p>
+    <section class="hero">
+      <p class="eyebrow">Rekentool voor wielrenners</p>
+      <h1>Hartslagzones <span>berekenen voor wielrennen</span></h1>
+      <p class="lede">Vul je maximale hartslag in en zie direct je vijf hartslagzones, met uitleg over welke zone bij welke training past.</p>
+      <div class="badges"><span>Direct resultaat</span><span>Percentage en Karvonen</span><span>Geschikt voor jeugd en volwassenen</span></div>
+    </section>
+    <section class="calc" aria-label="Rekentool hartslagzones">
+      <div class="panel">
+        <h2>Jouw gegevens</h2>
+        <label class="field"><span>Methode</span>
+          <select id="method" data-calc-input>
+            <option value="percentage">Percentage van maximale hartslag</option>
+            <option value="karvonen">Karvonen (hartslagreserve)</option>
+          </select>
+          <small>De eerste methode gebruikt ook WielerSchema.</small>
+        </label>
+        <label class="field"><span>Maximale hartslag (slagen per minuut)</span>
+          <input id="hrmax" type="number" inputmode="numeric" min="100" max="230" step="1" value="190" data-calc-input>
+          <small>Dit is een voorbeeld. Vul je eigen waarde in.</small>
+        </label>
+        <label class="field" id="rest-field" hidden><span>Rusthartslag (slagen per minuut)</span>
+          <input id="rest" type="number" inputmode="numeric" min="30" max="110" step="1" value="55" data-calc-input>
+          <small>Meet hem ’s ochtends na het wakker worden, nog in bed.</small>
+        </label>
+        <div class="field"><span>Maximale hartslag onbekend?</span>
+          <div class="inline">
+            <input id="age" type="number" inputmode="numeric" min="8" max="90" step="1" placeholder="Je leeftijd" aria-label="Je leeftijd">
+            <button id="estimate" class="btn ghost small" type="button">Schat mijn maximum</button>
+          </div>
+        </div>
+        <p id="note" class="notice">Vul je gegevens in. De zones verschijnen direct. Er wordt niets opgeslagen of verstuurd.</p>
+      </div>
+      <div class="panel" aria-live="polite">
+        <h2>Jouw zones</h2>
+        <p id="msg" class="msg" role="alert"></p>
+        <div id="results">
+          <p id="ftp-result" class="result-title"></p>
+          <div id="zone-bar" class="zone-bar" role="img"></div>
+          <div class="table-wrap">
+            <table class="zones">
+              <caption class="sr-only">Jouw zones met bereik en gebruik</caption>
+              <thead><tr><th scope="col">Zone</th><th scope="col">Naam</th><th scope="col">Bereik</th><th scope="col">Gebruik</th></tr></thead>
+              <tbody id="zones-body"></tbody>
+            </table>
+          </div>
+          <div class="actions">
+            <button id="copy" class="btn ghost small" type="button">Kopieer zones</button>
+            <button id="print" class="btn ghost small" type="button">Print</button>
+            <span id="status" role="status"></span>
+          </div>
+          <div class="cta">
+            <p>Neem je zones over in WielerSchema. De coach maakt een trainingsschema dat bij jouw hartslag past.</p>
+            <a id="cta" class="btn" href="/">Maak mijn trainingsschema →</a>
+          </div>
+        </div>
+      </div>
+    </section>
+    <article class="article">
+      <section>
+        <h2>Zo werken hartslagzones</h2>
+        <p>Hartslagzones verdelen je inspanning in vijf niveaus, van heel rustig tot maximaal. Door per training een zone te kiezen, rijd je rustige ritten echt rustig en hard als het hard moet. Veel renners rijden hun duurritten te hard en hun intervallen te zacht. Zones helpen om dat te voorkomen.</p>
+        <p>In deze tool zijn de grenzen 60, 70, 80, 90 en 100% van je maximale hartslag. Dat zijn dezelfde grenzen als in WielerSchema, zodat de zones in je schema overeenkomen met wat je hier berekent.</p>
+        <table>
+          <thead><tr><th>Zone</th><th>% van max</th><th>Gevoel</th></tr></thead>
+          <tbody>
+            <tr><td>Z1 Herstel</td><td>tot 60%</td><td>Heel licht</td></tr>
+            <tr><td>Z2 Duur</td><td>61–70%</td><td>Rustig, gesprek is makkelijk</td></tr>
+            <tr><td>Z3 Tempo</td><td>71–80%</td><td>Stevig, korte zinnen</td></tr>
+            <tr><td>Z4 Drempel</td><td>81–90%</td><td>Hard, maar vol te houden</td></tr>
+            <tr><td>Z5 Maximaal</td><td>91–100%</td><td>Zeer zwaar</td></tr>
+          </tbody>
+        </table>
+      </section>
+      <section>
+        <h2>Welke methode kies je?</h2>
+        <p><strong>Percentage van je maximale hartslag</strong> is de simpelste methode en werkt goed als je je maximum kent. <strong>Karvonen</strong> houdt ook rekening met je rusthartslag en rekent met je hartslagreserve (maximum min rust). Bij getrainde renners met een lage rusthartslag geeft dat vaak hogere zones dan de eerste methode.</p>
+        <p>Kies één methode en blijf daarbij, zodat je je zones van week tot week kunt vergelijken.</p>
+      </section>
+      <section>
+        <h2>Je maximale hartslag bepalen</h2>
+        <p>De leeftijdsformule (208 − 0,7 × leeftijd) is een gemiddelde. Voor een individu kan hij tien slagen of meer afwijken. De beste schatting is een gemeten waarde: de hoogste hartslag die je ooit hebt gehaald bij een maximale inspanning, of de uitkomst van een test onder begeleiding.</p>
+        <div class="callout"><strong>Let op:</strong> doe een maximale inspanning alleen als je gezond bent en bij voorkeur samen met iemand. Twijfel je of heb je klachten, overleg dan eerst met een arts. Voor jeugdrenners is een formule onnauwkeurig. Bespreek hun zones met een trainer.</div>
+      </section>
+      <section>
+        <h2>Zones gebruiken in je training</h2>
+        <ul>
+          <li><strong>Lange, rustige ritten:</strong> blijf in Z2. Ga je hogerop, dan wordt het een tempotraining.</li>
+          <li><strong>Intervallen:</strong> werk in Z4 en neem tussendoor rust in Z1.</li>
+          <li><strong>Herstelritten:</strong> Z1, ook als het saai voelt. Dan herstel je echt.</li>
+        </ul>
+        <p>Hartslag reageert met enige vertraging, vooral bij korte intervallen. Combineer hem met gevoel, of met vermogen als je een vermogensmeter hebt. <a href="/ftp-zones-berekenen/">Bereken dan ook je vermogenszones</a>.</p>
+      </section>
+      <section class="faq">
+        <h2>Veelgestelde vragen</h2>
+        <details><summary>Waarom wijkt mijn hartslag af van mijn horloge of fietscomputer?</summary><p>Apparaten gebruiken eigen grenzen en soms andere methoden. Kies zones die bij je training passen en gebruik die steeds. De tool hier gebruikt vaste percentages van je maximum.</p></details>
+        <details><summary>Wat beïnvloedt mijn hartslag nog meer?</summary><p>Hitte, vermoeidheid, slaap, stress, cafeïne en ziekte kunnen je hartslag hoger of lager maken. Daarom is het slim om ook op gevoel te letten.</p></details>
+        <details><summary>Moet mijn rusthartslag laag zijn?</summary><p>Een lage rusthartslag komt vaak voor bij getrainde mensen, maar er is geen vaste goede waarde. Het gaat om je eigen verloop: een plotselinge stijging van meerdere dagen kan een teken zijn van vermoeidheid of ziekte.</p></details>
+        <details><summary>Is deze tool medisch advies?</summary><p>Nee. De uitkomst is een indicatie voor je training en geen medisch advies. Heb je pijn of klachten tijdens het fietsen, stop dan en bespreek het met een arts.</p></details>
+      </section>
+      <section>
+        <h2>Meer rekentools</h2>
+        <div class="related">
+          <a href="/ftp-zones-berekenen/"><strong>FTP en vermogenszones berekenen</strong>Heb je een vermogensmeter? Bereken je zones op basis van je FTP.</a>
+          <a href="/"><strong>Maak je trainingsschema</strong>Laat de coach een schema voor je maken, met deze zones al ingevuld.</a>
+        </div>
+      </section>
+    </article>
+  </main>
+  <footer class="site-footer">
+    <p>© WielerSchema · <a href="/privacy.html">Privacyverklaring</a> · <a href="/">Terug naar de hoofdsite</a> · <a id="support-link" href="#" target="_blank" rel="noopener" hidden>Steun WielerSchema</a></p>
+    <p><span id="partner-link">
+      <a href="https://partner.bol.com/click/click?p=2&amp;t=url&amp;s=1559018&amp;f=TXL&amp;url=https%3A%2F%2Fwww.bol.com%2Fnl%2Fnl%2Fl%2Fracefietselektronica%2F54209%2F&amp;name=Racefietselektronica%20kopen%3F%20Kijk%20snel!" target="_blank" rel="sponsored nofollow noopener">Racefietselektronica kopen? Kijk snel!</a> (partnerlink) <button type="button" id="partner-info-btn" class="info-btn" aria-expanded="false" aria-controls="partner-info" aria-label="Uitleg over de partnerlink">i</button>
+      <span id="partner-info" class="partner-info" role="note" hidden>Je betaalt niets extra. Koop je via deze link bij bol.com, dan ontvangt WielerSchema ongeveer 6% van de verkoopprijs als commissie. Dat helpt de kosten te dekken.</span>
+    </span></p>
+  </footer>
+  <script src="/zones-math.js"></script>
+  <script src="/calc.js"></script>
+</body>
+</html>

@@ -377,8 +377,8 @@ ok(text().includes("Heb je kunnen trainen, en hoe voelde het?"), "coach vraagt z
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Account")[0].click();
 ok(text().includes("Ingelogd als") && text().includes("hessel"), "accountpagina");
 ok(text().includes("Trainingsprofiel") && text().includes("Geboortedatum") &&
-  text().includes("60%, 70%, 80%, 90% en 100%") && text().includes("Gebruikersnaam en wachtwoord"),
-  "account bevat bewerkbaar trainingsprofiel en inloggegevens");
+  text().includes("60%, 70%, 80%, 90% en 100%") && text().includes("Inloggegevens") && text().includes("E-mailadres (voor wachtwoord vergeten, optioneel)"),
+  "account bevat bewerkbaar trainingsprofiel, inloggegevens en e-mailadres");
 const accountForms = find(root.app, e => e.tagName === "FORM");
 await submit(accountForms[0]);
 ok(text().includes("Profiel opgeslagen en je huidige schema bijgewerkt."), "accountprofiel kan worden opgeslagen");

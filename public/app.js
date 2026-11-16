@@ -19,6 +19,20 @@ const nav = document.getElementById("nav");
 const sidebarAccount = document.getElementById("sidebar-account");
 const coachLauncher = document.getElementById("coach-launcher");
 
+// Zones uit de rekentool (/?hrmax=190&ftp=250) worden in de intake alvast ingevuld
+const TOOL_PREFILL = (() => {
+  try {
+    const query = new URLSearchParams(location.search);
+    const hr = Math.round(Number(query.get("hrmax"))), ftp = Math.round(Number(query.get("ftp")));
+    const out = {};
+    if (hr >= 100 && hr <= 230) out.hr_max = hr;
+    if (ftp >= 50 && ftp <= 1000) out.ftp = ftp;
+    if (!out.hr_max && !out.ftp) return null;
+    out.meter = out.hr_max && out.ftp ? "both" : out.hr_max ? "heart_rate" : "power";
+    return out;
+  } catch { return null; }
+})();
+
 const state = { user: null, data: null, week: 1, page: "plan", coachDraft: "", unreadCoach: 0 };
 
 // ---------- hulpfuncties ----------
@@ -331,18 +345,26 @@ function initFooter() {
 }
 
 // Partnerlink (bol.com): niet tonen aan ingelogde gebruikers onder de 18
+const PARTNER_URL = "https://partner.bol.com/click/click?p=2&t=url&s=1559018&f=TXL&url=https%3A%2F%2Fwww.bol.com%2Fnl%2Fnl%2Fl%2Fracefietselektronica%2F54209%2F&name=Racefietselektronica%20kopen%3F%20Kijk%20snel!";
+function isMinorUser() {
+  const born = state.user && state.profile && state.profile.birth_date;
+  if (!born) return false;
+  const birth = new Date(born + "T00:00:00Z"), now = new Date();
+  let age = now.getUTCFullYear() - birth.getUTCFullYear();
+  if (now.getUTCMonth() < birth.getUTCMonth() || (now.getUTCMonth() === birth.getUTCMonth() && now.getUTCDate() < birth.getUTCDate())) age--;
+  return age < 18;
+}
 function applyPartnerLink() {
   const link = document.getElementById("partner-link");
-  if (!link) return;
-  const born = state.user && state.profile && state.profile.birth_date;
-  let minor = false;
-  if (born) {
-    const birth = new Date(born + "T00:00:00Z"), now = new Date();
-    let age = now.getUTCFullYear() - birth.getUTCFullYear();
-    if (now.getUTCMonth() < birth.getUTCMonth() || (now.getUTCMonth() === birth.getUTCMonth() && now.getUTCDate() < birth.getUTCDate())) age--;
-    minor = age < 18;
-  }
-  link.hidden = minor;
+  if (link) link.hidden = isMinorUser();
+}
+// Dezelfde link in het menu voor ingelogde gebruikers, met uitleg bij het i-knopje
+function partnerNode() {
+  const info = h("span", { class: "partner-info", role: "note", hidden: true, text: "Je betaalt niets extra. Koop je via deze link bij bol.com, dan ontvangt WielerSchema ongeveer 6% van de verkoopprijs als commissie. Dat helpt de kosten te dekken." });
+  const button = h("button", { type: "button", class: "info-btn", "aria-expanded": "false", "aria-label": "Uitleg over de partnerlink", text: "i" });
+  button.addEventListener("click", () => { info.hidden = !info.hidden; button.setAttribute("aria-expanded", String(!info.hidden)); });
+  return h("div", { class: "sidebar-partner" },
+    h("a", { href: PARTNER_URL, target: "_blank", rel: "sponsored nofollow noopener", text: "Racefietselektronica kopen? Kijk snel!" }), " (partnerlink) ", button, info);
 }
 
 function renderNav(activePage = state.page) {
@@ -388,6 +410,7 @@ function renderNav(activePage = state.page) {
       }
     })
   );
+  if (!isMinorUser()) sidebarAccount.appendChild(partnerNode());
   if (state.data?.plan) coachLauncher.appendChild(h("button", {
     class: "coach-launcher-button",
     type: "button",
@@ -409,6 +432,7 @@ function viewAuth(mode = "login") {
   const username = h("input", { type: "text", name: "username", autocomplete: "username", required: true, minlength: 3, maxlength: 30, autocapitalize: "none" });
   const password = h("input", { type: "password", name: "password", autocomplete: mode === "login" ? "current-password" : "new-password", required: true, minlength: mode === "login" ? 1 : 10, maxlength: 200 });
   const consent = h("input", { type: "checkbox", name: "consent", required: mode === "register" });
+  const email = h("input", { type: "email", name: "email", autocomplete: "email", maxlength: 254, placeholder: "naam@voorbeeld.nl" });
   const submit = h("button", { class: "btn", type: "submit", text: mode === "login" ? "Inloggen" : "Account maken" });
 
   const form = h("form", {
@@ -419,7 +443,7 @@ function viewAuth(mode = "login") {
       const done = busyButton(submit);
       try {
         const body = { username: username.value, password: password.value };
-        if (mode === "register") body.consent = consent.checked;
+        if (mode === "register") { body.consent = consent.checked; body.email = email.value.trim(); }
         const res = await api("POST", mode === "login" ? "/api/login" : "/api/register", body);
         state.user = res.username;
         await start();
@@ -430,8 +454,9 @@ function viewAuth(mode = "login") {
     }
   },
   h("h2", { text: mode === "login" ? "Inloggen" : "Account maken" }),
-  field("Gebruikersnaam", username, mode === "register" ? "Geen e-mailadres nodig. Kies een naam om mee in te loggen." : null),
-  field("Wachtwoord", password, mode === "register" ? "Minstens 10 tekens. Let op: wachtwoord vergeten kan nu nog niet hersteld worden." : null),
+  field("Gebruikersnaam", username, mode === "register" ? "Kies een naam om mee in te loggen." : null),
+  mode === "register" ? field("E-mailadres (optioneel)", email, "Alleen om later je wachtwoord te kunnen herstellen. Geen nieuwsbrief en geen reclame. Ben je jonger dan 16? Gebruik het adres van een ouder of verzorger.") : null,
+  field("Wachtwoord", password, mode === "register" ? "Minstens 10 tekens. Herstel van je wachtwoord via e-mail komt later; vul daarom een e-mailadres in." : null),
   mode === "register"
     ? h("div", { class: "stack" },
     h("label", { class: "check" }, consent, h("span", {}, "Ik heb de ", h("a", { href: "privacy.html", target: "_blank", rel: "noopener" }, "privacyverklaring"), " gelezen en ga akkoord met verwerking van mijn gegevens voor deze dienst, waaronder verwerking van trainingsgegevens door de AI-coach.")))
@@ -513,7 +538,8 @@ function viewIntake(prefill) {
   state.page = "plan";
   renderNav("plan");
   const p = prefill || {};
-  const savedProfile = state.profile || {};
+  const savedProfile = { ...(state.profile || {}) };
+  if (TOOL_PREFILL && !savedProfile.hr_max && !savedProfile.ftp) Object.assign(savedProfile, TOOL_PREFILL);
   const error = h("p", { class: "error", role: "alert" });
   const status = h("p", { class: "muted", role: "status" });
 
@@ -1396,7 +1422,7 @@ function newsletterSection() {
   return h("section", { class: "landing-info newsletter" },
     h("h2", { text: "Blijf op de hoogte" }),
     h("p", { text: "Ontvang af en toe een update over nieuwe functies en trainingstips. Je kunt je altijd weer afmelden." }),
-    h("iframe", { class: "newsletter-frame", src: NEWSLETTER_URL, title: "Aanmelden voor de WielerSchema-nieuwsbrief", loading: "lazy", width: "100%", height: "460" }));
+    h("iframe", { class: "newsletter-frame", src: NEWSLETTER_URL, title: "Aanmelden voor de WielerSchema-nieuwsbrief", loading: "lazy", width: "100%", height: "300" }));
 }
 
 function dayCard(plan, week, dag) {
@@ -2220,6 +2246,7 @@ function viewAccount() {
   const username = h("input", { type: "text", required: true, minlength: 3, maxlength: 30, autocapitalize: "none", value: state.user });
   const currentPassword = h("input", { type: "password", autocomplete: "current-password", required: true });
   const newPassword = h("input", { type: "password", autocomplete: "new-password", minlength: 10, maxlength: 200 });
+  const accountEmail = h("input", { type: "email", autocomplete: "email", maxlength: 254, placeholder: "naam@voorbeeld.nl", value: state.email || "" });
   const credentialsError = h("p", { class: "error", role: "alert" });
   const credentialsStatus = h("p", { class: "muted", role: "status" });
   const saveCredentials = h("button", { class: "btn", type: "submit", text: "Accountgegevens opslaan" });
@@ -2302,9 +2329,10 @@ function viewAccount() {
         const done = busyButton(saveCredentials);
         try {
           const result = await api("POST", "/api/account/credentials", {
-            username: username.value, current_password: currentPassword.value, new_password: newPassword.value
+            username: username.value, email: accountEmail.value.trim(), current_password: currentPassword.value, new_password: newPassword.value
           });
           state.user = result.username;
+          state.email = result.email || "";
           username.value = result.username;
           loggedInName.textContent = result.username;
           renderNav("account");
@@ -2318,8 +2346,9 @@ function viewAccount() {
         }
       }
     },
-    h("h2", { text: "Gebruikersnaam en wachtwoord" }),
+    h("h2", { text: "Inloggegevens" }),
     field("Inloggebruikersnaam", username),
+    field("E-mailadres (voor wachtwoord vergeten, optioneel)", accountEmail, state.email ? "Laat dit leeg om je e-mailadres te wissen." : "Je hebt nog geen e-mailadres. Zonder e-mailadres kunnen we je wachtwoord later niet herstellen."),
     field("Huidig wachtwoord (verplicht om wijzigingen op te slaan)", currentPassword),
     field("Nieuw wachtwoord (optioneel, minstens 10 tekens)", newPassword),
     credentialsError, credentialsStatus, saveCredentials),
@@ -2350,10 +2379,9 @@ function viewAccount() {
 async function start() {
   loadSupport();
   try {
-    if (!state.user) {
-      const me = await api("GET", "/api/me");
-      state.user = me.username;
-    }
+    const me = await api("GET", "/api/me");
+    state.user = me.username;
+    state.email = me.email || "";
     state.data = await api("GET", "/api/plan");
     const account = await api("GET", "/api/account/profile");
     state.profile = account.profile;

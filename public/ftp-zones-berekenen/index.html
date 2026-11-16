@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FTP en vermogenszones berekenen | WielerSchema</title>
+  <meta name="description" content="Bereken je FTP uit een test en zie direct je vermogenszones in watt, met 5 of 7 zones en watt per kilo. Inclusief uitleg en een trainingsschema op maat.">
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <meta name="theme-color" content="#f5f7f5">
+  <link rel="canonical" href="https://wielerschema.me/ftp-zones-berekenen/">
+  <link rel="icon" href="/logo.png" type="image/png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/tools.css">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="nl_NL">
+  <meta property="og:site_name" content="WielerSchema">
+  <meta property="og:title" content="FTP en vermogenszones berekenen | WielerSchema">
+  <meta property="og:description" content="Bereken je FTP uit een test en zie direct je vermogenszones in watt, met 5 of 7 zones en watt per kilo. Inclusief uitleg en een trainingsschema op maat.">
+  <meta property="og:url" content="https://wielerschema.me/ftp-zones-berekenen/">
+  <meta property="og:image" content="https://wielerschema.me/og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="FTP en vermogenszones berekenen | WielerSchema">
+  <meta name="twitter:description" content="Bereken je FTP uit een test en zie direct je vermogenszones in watt, met 5 of 7 zones en watt per kilo. Inclusief uitleg en een trainingsschema op maat.">
+  <meta name="twitter:image" content="https://wielerschema.me/og-image.png">
+  <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebApplication", "name": "FTP en vermogenszones berekenen", "url": "https://wielerschema.me/ftp-zones-berekenen/", "applicationCategory": "SportsApplication", "operatingSystem": "Alle apparaten met een browser", "inLanguage": "nl", "isAccessibleForFree": true, "publisher": {"@type": "Organization", "name": "WielerSchema", "url": "https://wielerschema.me"}}</script>
+  <script type="application/ld+json">{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "WielerSchema", "item": "https://wielerschema.me/"}, {"@type": "ListItem", "position": 2, "name": "FTP en vermogenszones berekenen", "item": "https://wielerschema.me/ftp-zones-berekenen/"}]}</script>
+</head>
+<body data-calc="ftp">
+  <header class="site-header">
+    <div class="inner">
+      <a href="/" aria-label="WielerSchema startpagina"><img src="/logo.png" width="76" height="38" alt="WielerSchema"></a>
+      <nav class="site-nav" aria-label="Hoofdmenu">
+        <a href="/hartslagzones-berekenen/" >Hartslagzones</a>
+        <a href="/ftp-zones-berekenen/" aria-current="page">FTP-zones</a>
+        <a class="btn small" href="/">Naar WielerSchema</a>
+      </nav>
+    </div>
+  </header>
+  <main class="wrap">
+    <p class="crumbs"><a href="/">WielerSchema</a> › FTP en vermogenszones berekenen</p>
+    <section class="hero">
+      <p class="eyebrow">Rekentool voor wielrenners</p>
+      <h1>FTP en vermogenszones <span>berekenen</span></h1>
+      <p class="lede">Vul je FTP in of reken hem uit een 20-minutentest, 8-minutentest of ramptest. Je ziet direct je vermogenszones in watt.</p>
+      <div class="badges"><span>Direct resultaat</span><span>5 of 7 zones</span><span>Watt per kilo</span></div>
+    </section>
+    <section class="calc" aria-label="Rekentool FTP en vermogenszones">
+      <div class="panel">
+        <h2>Jouw gegevens</h2>
+        <label class="field"><span>Hoe wil je je FTP bepalen?</span>
+          <select id="test" data-calc-input>
+            <option value="direct">Ik ken mijn FTP</option>
+            <option value="twenty">20-minutentest (gemiddeld vermogen × 0,95)</option>
+            <option value="eight">8-minutentest (gemiddeld vermogen × 0,90)</option>
+            <option value="ramp">Ramptest (beste minuut × 0,75)</option>
+          </select>
+        </label>
+        <label class="field" id="ftp-field"><span>FTP in watt</span>
+          <input id="ftp" type="number" inputmode="numeric" min="50" max="600" step="1" value="250" data-calc-input>
+          <small>Dit is een voorbeeld. Vul je eigen waarde in.</small>
+        </label>
+        <label class="field" id="test-field" hidden><span>Testresultaat in watt</span>
+          <input id="testvalue" type="number" inputmode="numeric" min="50" max="900" step="1" placeholder="Bijv. 263" data-calc-input>
+          <small>Gemiddeld vermogen van de test, of bij de ramptest de beste minuut.</small>
+        </label>
+        <label class="field"><span>Aantal zones</span>
+          <select id="count" data-calc-input>
+            <option value="7">7 zones (Coggan)</option>
+            <option value="5">5 zones</option>
+          </select>
+          <small>Beide opties staan ook in WielerSchema.</small>
+        </label>
+        <label class="field"><span>Gewicht in kilo (optioneel)</span>
+          <input id="weight" type="number" inputmode="decimal" min="25" max="150" step="0.1" placeholder="Voor watt per kilo" data-calc-input>
+        </label>
+        <p class="notice">De zones verschijnen direct. Er wordt niets opgeslagen of verstuurd.</p>
+      </div>
+      <div class="panel" aria-live="polite">
+        <h2>Jouw zones</h2>
+        <p id="msg" class="msg" role="alert"></p>
+        <div id="results">
+          <p id="ftp-result" class="result-title"></p>
+          <div id="zone-bar" class="zone-bar" role="img"></div>
+          <div class="table-wrap">
+            <table class="zones">
+              <caption class="sr-only">Jouw zones met bereik en gebruik</caption>
+              <thead><tr><th scope="col">Zone</th><th scope="col">Naam</th><th scope="col">Bereik</th><th scope="col">Gebruik</th></tr></thead>
+              <tbody id="zones-body"></tbody>
+            </table>
+          </div>
+          <div class="actions">
+            <button id="copy" class="btn ghost small" type="button">Kopieer zones</button>
+            <button id="print" class="btn ghost small" type="button">Print</button>
+            <span id="status" role="status"></span>
+          </div>
+          <div class="cta">
+            <p>Neem je FTP over in WielerSchema. De coach maakt een schema met trainingen in jouw vermogenszones.</p>
+            <a id="cta" class="btn" href="/">Maak mijn trainingsschema →</a>
+          </div>
+        </div>
+      </div>
+    </section>
+    <article class="article">
+      <section>
+        <h2>Wat is FTP?</h2>
+        <p>FTP staat voor Functional Threshold Power: ongeveer het hoogste gemiddelde vermogen dat je een uur kunt volhouden. Het is het ijkpunt voor je vermogenszones. Hoe beter je FTP klopt, hoe beter je training aansluit bij wat je lichaam aankan.</p>
+        <p>De zones hierboven volgen de bekende indeling van Coggan, met grenzen op 55, 75, 90, 105, 120 en 150% van je FTP. WielerSchema gebruikt dezelfde percentages. Kies je 5 zones, dan valt alles boven 105% in de laatste zone.</p>
+        <table>
+          <thead><tr><th>Zone</th><th>% van FTP</th><th>Doel</th></tr></thead>
+          <tbody>
+            <tr><td>Z1 Actief herstel</td><td>tot 55%</td><td>Herstel</td></tr>
+            <tr><td>Z2 Duur</td><td>56–75%</td><td>Basisconditie</td></tr>
+            <tr><td>Z3 Tempo</td><td>76–90%</td><td>Stevig, constant</td></tr>
+            <tr><td>Z4 Drempel</td><td>91–105%</td><td>Lange intervallen</td></tr>
+            <tr><td>Z5 VO2max</td><td>106–120%</td><td>Zware intervallen</td></tr>
+            <tr><td>Z6 Anaeroob</td><td>121–150%</td><td>Korte, zeer zware inspanningen</td></tr>
+            <tr><td>Z7 Neuromusculair</td><td>boven 150%</td><td>Sprints</td></tr>
+          </tbody>
+        </table>
+      </section>
+      <section>
+        <h2>Je FTP testen</h2>
+        <ul>
+          <li><strong>20-minutentest:</strong> na een goede warming-up rijd je 20 minuten zo hard als je volhoudt. Je FTP is dan ongeveer 95% van het gemiddelde vermogen.</li>
+          <li><strong>8-minutentest:</strong> korter en minder zwaar voor beginners. Je rekent met ongeveer 90% van het gemiddelde.</li>
+          <li><strong>Ramptest:</strong> het vermogen loopt per minuut op tot je niet meer kunt. Je FTP is dan ongeveer 75% van je beste minuut.</li>
+        </ul>
+        <p>Een test geeft een schatting. Test onder gelijke omstandigheden, bijvoorbeeld op dezelfde klim of op de trainer, zodat je uitkomsten onderling te vergelijken zijn.</p>
+        <div class="callout"><strong>Let op:</strong> een test is zwaar. Doe hem alleen als je gezond en uitgerust bent. Heb je klachten of twijfels, overleg dan met een arts. Voor jeugdrenners is een FTP-test meestal niet nodig. Bespreek dit met een trainer.</div>
+      </section>
+      <section>
+        <h2>Watt per kilo</h2>
+        <p>Op de klim telt je vermogen in verhouding tot je gewicht. Vul je gewicht in en de tool laat je FTP in watt per kilo zien. Dat getal is handig om jezelf over de tijd te vergelijken. Vergelijken met anderen is minder zinvol, omdat testmethoden verschillen.</p>
+      </section>
+      <section class="faq">
+        <h2>Veelgestelde vragen</h2>
+        <details><summary>Hoe vaak moet ik mijn FTP opnieuw testen?</summary><p>Veel renners testen na een trainingsblok, bijvoorbeeld om de vier tot acht weken. Voel je dat je zones te makkelijk of te zwaar zijn, dan kan een nieuwe test eerder nodig zijn.</p></details>
+        <details><summary>Kan ik mijn FTP ook schatten zonder test?</summary><p>Een goede schatting kan uit een recente zware rit of een app komen, maar een test blijft het betrouwbaarst. Bij twijfel is een iets te lage FTP veiliger dan een te hoge.</p></details>
+        <details><summary>Wat als mijn fietscomputer andere zones gebruikt?</summary><p>Apparaten kunnen eigen grenzen gebruiken. Kies de zones die je steeds gebruikt, en let erop dat je trainingsschema dezelfde grenzen aanhoudt. In WielerSchema kun je de grenzen zelf instellen.</p></details>
+        <details><summary>Is deze tool medisch advies?</summary><p>Nee. De uitkomst is een indicatie voor je training. Heb je pijn of klachten tijdens het fietsen, stop dan en bespreek het met een arts.</p></details>
+      </section>
+      <section>
+        <h2>Meer rekentools</h2>
+        <div class="related">
+          <a href="/hartslagzones-berekenen/"><strong>Hartslagzones berekenen</strong>Geen vermogensmeter? Bereken je zones op basis van je hartslag.</a>
+          <a href="/"><strong>Maak je trainingsschema</strong>Laat de coach een schema voor je maken, met deze zones al ingevuld.</a>
+        </div>
+      </section>
+    </article>
+  </main>
+  <footer class="site-footer">
+    <p>© WielerSchema · <a href="/privacy.html">Privacyverklaring</a> · <a href="/">Terug naar de hoofdsite</a> · <a id="support-link" href="#" target="_blank" rel="noopener" hidden>Steun WielerSchema</a></p>
+    <p><span id="partner-link">
+      <a href="https://partner.bol.com/click/click?p=2&amp;t=url&amp;s=1559018&amp;f=TXL&amp;url=https%3A%2F%2Fwww.bol.com%2Fnl%2Fnl%2Fl%2Fracefietselektronica%2F54209%2F&amp;name=Racefietselektronica%20kopen%3F%20Kijk%20snel!" target="_blank" rel="sponsored nofollow noopener">Racefietselektronica kopen? Kijk snel!</a> (partnerlink) <button type="button" id="partner-info-btn" class="info-btn" aria-expanded="false" aria-controls="partner-info" aria-label="Uitleg over de partnerlink">i</button>
+      <span id="partner-info" class="partner-info" role="note" hidden>Je betaalt niets extra. Koop je via deze link bij bol.com, dan ontvangt WielerSchema ongeveer 6% van de verkoopprijs als commissie. Dat helpt de kosten te dekken.</span>
+    </span></p>
+  </footer>
+  <script src="/zones-math.js"></script>
+  <script src="/calc.js"></script>
+</body>
+</html>
