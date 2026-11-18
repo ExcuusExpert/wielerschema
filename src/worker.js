@@ -10,6 +10,9 @@
 const SESSION_DAYS = 30;
 const PBKDF2_ITERATIONS = 100000;      // maximum dat Cloudflare Workers toestaat
 const AI_PER_USER_PER_DAY = 15;        // past bij de gratis Groq-laag (circa 100 aanvragen per dag voor iedereen samen)
+const AI_PRO_PER_USER_PER_DAY = 60;    // 8-wekenpas: ruimere dagelijkse limiet (de gezamenlijke limiet hieronder blijft gelden)
+const FREE_CHAT_PER_DAY = 10;          // gratis: maximaal 10 chatberichten per dag
+const PASS_WEEKS = 8;                  // een pas duurt 8 weken
 const AI_GLOBAL_PER_DAY = 100;         // gezamenlijke rem; verhoog dit pas na een betaald Groq-account
 const REGISTER_PER_IP_PER_DAY = 10;
 const LOGIN_PER_IP_PER_DAY = 40;
@@ -20,9 +23,9 @@ const GROQ_TIMEOUT_MS = 40000;
 const CANONICAL_HOST = "wielerschema.me";
 // Steunlink (bijv. Tikkie): staat in Cloudflare als variabele TIKKIE_URL en is makkelijk te vervangen. Alleen https en bekende betaaldiensten.
 const SUPPORT_HOSTS = ["tikkie.me", "bunq.me", "paypal.me", "ko-fi.com", "buymeacoffee.com"];
-function supportUrl(env) {
+function supportUrl(env, key = "TIKKIE_URL") {
   try {
-    const url = new URL(String(env.TIKKIE_URL || "").trim());
+    const url = new URL(String(env[key] || "").trim());
     return url.protocol === "https:" && SUPPORT_HOSTS.includes(url.hostname) ? url.href : null;
   } catch { return null; }
 }
@@ -49,6 +52,8 @@ const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS user_emails_email ON user_emails (email)`,
   `CREATE TABLE IF NOT EXISTS account_profiles (
      user_id TEXT PRIMARY KEY, profile TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS passes (
+     user_id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, granted_at INTEGER NOT NULL, note TEXT)`,
   `CREATE TABLE IF NOT EXISTS sessions (
      token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
@@ -437,12 +442,14 @@ function normalizeStoredWeek(week) {
 
 // ---------- invoer controleren ----------
 // Een schema duurt maximaal 16 weken (standaard 8 zonder datum); doel en wedstrijden mogen tot 20 weken vooruit.
-const MAX_PLAN_WEEKS = 16;
+const MAX_PLAN_WEEKS = 16;          // met pas
+const FREE_PLAN_WEEKS = 8;          // gratis
 const DEFAULT_PLAN_WEEKS = 8;
 const MAX_HORIZON_DAYS = 140;
-const MAX_RACES = 4;
+const MAX_RACES = 4;               // gratis
+const PRO_MAX_RACES = 15;           // met pas
 const RACE_LABELS = { A: "hoofddoel", B: "belangrijk", C: "oefenwedstrijd" };
-function cleanRaces(raw) {
+function cleanRaces(raw, maxRaces = MAX_RACES) {
   if (raw === undefined || raw === null || raw === "") return { races: [] };
   if (!Array.isArray(raw)) return { error: "De wedstrijden kloppen niet." };
   const races = [];
@@ -458,7 +465,7 @@ function cleanRaces(raw) {
     seen.add(item.datum);
     races.push({ datum: item.datum, naam, prioriteit: RACE_LABELS[item.prioriteit] ? item.prioriteit : "B" });
   }
-  if (races.length > MAX_RACES) return { error: `Je kunt maximaal ${MAX_RACES} wedstrijden invullen.` };
+  if (races.length > maxRaces) return { error: maxRaces < PRO_MAX_RACES ? `Je kunt maximaal ${maxRaces} wedstrijden invullen. Met de 8-wekenpas kun je er ${PRO_MAX_RACES} invullen.` : `Je kunt maximaal ${maxRaces} wedstrijden invullen.`, upgrade: maxRaces < PRO_MAX_RACES };
   return { races: races.sort((a, b) => a.datum.localeCompare(b.datum)) };
 }
 // Datum waar het schema naartoe werkt: het ingevulde doel, anders de hoofdwedstrijd (A), anders de eerste wedstrijd.
@@ -468,7 +475,7 @@ function targetDate(intake) {
   return (races.find(r => r.prioriteit === "A") || races[0])?.datum || null;
 }
 
-function cleanIntake(raw) {
+function cleanIntake(raw, pro = false) {
   if (!raw || typeof raw !== "object") return { error: "Vul het formulier in." };
   const doel = cleanText(raw.doel, 200);
   if (doel.length < 3) return { error: "Beschrijf je doel (bijvoorbeeld: toertocht van 120 km in juni)." };
@@ -487,7 +494,7 @@ function cleanIntake(raw) {
     if (daysBetween(today(), raw.datum) > MAX_HORIZON_DAYS) return { error: "Je doel ligt meer dan 20 weken weg. Kies een datum binnen 20 weken of laat de datum leeg; later maak je een nieuw schema." };
     datum = raw.datum;
   }
-  const cleanedRaces = cleanRaces(raw.wedstrijden);
+  const cleanedRaces = cleanRaces(raw.wedstrijden, pro ? PRO_MAX_RACES : MAX_RACES);
   if (cleanedRaces.error) return cleanedRaces;
   const cleanedProfile = cleanProfile(raw, raw.meter);
   if (cleanedProfile.error) return cleanedProfile;
@@ -513,10 +520,10 @@ function cleanAnswers(raw) {
     .filter(a => a.vraag && a.antwoord);
 }
 
-function planWeeks(intake, start) {
+function planWeeks(intake, start, pro = false) {
   const target = targetDate(intake);
   if (!target) return DEFAULT_PLAN_WEEKS;
-  return Math.min(MAX_PLAN_WEEKS, Math.max(2, Math.floor(daysBetween(start, target) / 7) + 1));
+  return Math.min(pro ? MAX_PLAN_WEEKS : FREE_PLAN_WEEKS, Math.max(2, Math.floor(daysBetween(start, target) / 7) + 1));
 }
 
 // Maakt van het AI-antwoord een veilige, vaste week. Dit is de belangrijkste vangrail.
@@ -686,6 +693,53 @@ function aiError(r) {
   return json({ error: "upstream", message: "Het maken van het schema is niet gelukt. Probeer het opnieuw." }, 502);
 }
 
+// ---------- 8-wekenpas ----------
+// De pas wordt handmatig geactiveerd nadat de betaling (Tikkie) binnen is, zie /api/admin/pass
+async function passExpiry(env, userId) {
+  const row = await env.DB.prepare("SELECT expires_at FROM passes WHERE user_id = ?").bind(userId).first();
+  return row && row.expires_at > Date.now() ? row.expires_at : null;
+}
+async function isPro(env, userId) { return (await passExpiry(env, userId)) !== null; }
+async function grantPass(env, username, weeks, note) {
+  const user = await env.DB.prepare("SELECT id FROM users WHERE username = ?").bind(username).first();
+  if (!user) return null;
+  const now = Date.now();
+  const current = await passExpiry(env, user.id);
+  const expires = Math.max(now, current || 0) + weeks * 7 * 86400000; // verlengen telt op bij de lopende pas
+  await env.DB.prepare(
+    "INSERT INTO passes (user_id, expires_at, granted_at, note) VALUES (?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET expires_at = excluded.expires_at, granted_at = excluded.granted_at, note = excluded.note"
+  ).bind(user.id, expires, now, cleanText(note, 120)).run();
+  return expires;
+}
+async function adminAllowed(request, env) {
+  const key = typeof env.ADMIN_TOKEN === "string" ? env.ADMIN_TOKEN : "";
+  const given = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  return key.length >= 24 && (await safeEqual(await sha256Hex(given), await sha256Hex(key)));
+}
+// Beheer: pas aanzetten, verlengen of intrekken (POST) en lijst van actieve passen (GET)
+async function adminPass(request, env) {
+  if (!(await adminAllowed(request, env))) return json({ error: "unauthorized" }, 401, { "Cache-Control": "no-store" });
+  if (request.method === "GET") {
+    const rows = await env.DB.prepare("SELECT u.username AS username, p.expires_at AS expires_at FROM passes p JOIN users u ON u.id = p.user_id WHERE p.expires_at > ? ORDER BY p.expires_at ASC")
+      .bind(Date.now()).all();
+    return json({ passen: (rows.results || []).map(r => ({ gebruiker: r.username, verloopt: new Date(r.expires_at).toISOString() })) }, 200, { "Cache-Control": "no-store" });
+  }
+  const body = await readJson(request);
+  const username = typeof body.username === "string" ? body.username.trim().toLowerCase().slice(0, 60) : "";
+  if (body.intrekken === true) {
+    const user = await env.DB.prepare("SELECT id FROM users WHERE username = ?").bind(username).first();
+    if (!user) return json({ error: "not_found", message: "Gebruiker niet gevonden." }, 404);
+    await env.DB.prepare("DELETE FROM passes WHERE user_id = ?").bind(user.id).run();
+    log("pass_revoked");
+    return json({ ok: true, ingetrokken: true });
+  }
+  const weeks = Number.isInteger(body.weeks) && body.weeks >= 1 && body.weeks <= 52 ? body.weeks : PASS_WEEKS;
+  const expires = await grantPass(env, username, weeks, body.note);
+  if (!expires) return json({ error: "not_found", message: "Gebruiker niet gevonden." }, 404);
+  log("pass_granted", { weeks });
+  return json({ ok: true, verloopt: new Date(expires).toISOString() });
+}
+
 async function aiAllowed(env, user) {
   const day = today();
   if (!(await hit(env, `ai:g:${day}`, AI_GLOBAL_PER_DAY))) return { ok: false, res: json({ error: "busy", message: "De dienst is vandaag druk bezet. Probeer het morgen opnieuw." }, 503) };
@@ -693,7 +747,8 @@ async function aiAllowed(env, user) {
     ? env.AI_UNLIMITED_USER_IDS.split(",").map(id => id.trim()).filter(Boolean)
     : [];
   if (unlimitedUsers.includes(user.id)) return { ok: true };
-  if (!(await hit(env, `ai:u:${user.id}:${day}`, AI_PER_USER_PER_DAY))) return { ok: false, res: json({ error: "ai_limit", message: `Je hebt vandaag het maximum van ${AI_PER_USER_PER_DAY} AI-aanvragen bereikt. Probeer het morgen opnieuw.` }, 429) };
+  const perUser = (await isPro(env, user.id)) ? AI_PRO_PER_USER_PER_DAY : AI_PER_USER_PER_DAY;
+  if (!(await hit(env, `ai:u:${user.id}:${day}`, perUser))) return { ok: false, res: json({ error: "ai_limit", message: `Je hebt vandaag het maximum van ${perUser} AI-aanvragen bereikt. Probeer het morgen opnieuw.` }, 429) };
   return { ok: true };
 }
 
@@ -865,6 +920,7 @@ async function deleteActivity(env, user, activityId) {
 }
 
 async function activityCoachFeedback(env, user, activity) {
+  if (!(await isPro(env, user.id))) return null; // persoonlijke AI-ritanalyse hoort bij de pas
   const prompt = `<activiteit>${JSON.stringify({
     datum: activity.start_date_local,
     duur_minuten: activity.elapsed_time ? Math.round(activity.elapsed_time / 60) : null,
@@ -937,6 +993,7 @@ async function handleApi(request, env, url) {
   if (path === "/api/register" && method === "POST") return register(request, env);
   if (path === "/api/login" && method === "POST") return login(request, env);
   if (path === "/api/intervals/callback" && method === "GET") return intervalsCallback(request, env);
+  if (path === "/api/admin/pass" && (method === "POST" || method === "GET")) return adminPass(request, env);
 
   const user = await currentUser(env, request);
   if (path === "/api/logout" && method === "POST") {
@@ -946,7 +1003,13 @@ async function handleApi(request, env, url) {
   }
   if (!user) return json({ error: "unauthorized" }, 401);
 
-  if (path === "/api/me" && method === "GET") return json({ username: user.username, email: await emailOf(env, user.id) });
+  if (path === "/api/me" && method === "GET") {
+    const expires = await passExpiry(env, user.id);
+    return json({ username: user.username, email: await emailOf(env, user.id),
+      pas: { actief: expires !== null, verloopt: expires ? new Date(expires).toISOString() : null },
+      limieten: { weken: expires ? MAX_PLAN_WEEKS : FREE_PLAN_WEEKS, wedstrijden: expires ? PRO_MAX_RACES : MAX_RACES, chat_per_dag: expires ? null : FREE_CHAT_PER_DAY },
+      betaallink: supportUrl(env, "PAS_URL") });
+  }
   if (path === "/api/intervals/status" && method === "GET") return intervalsStatus(env, user);
   if (path === "/api/intervals/connect" && method === "GET") return intervalsConnect(env, user, request);
   if (path === "/api/intervals/sync" && method === "POST") return intervalsSync(request, env, user);
@@ -985,6 +1048,40 @@ async function handleApi(request, env, url) {
   return json({ error: "not_found" }, 404);
 }
 
+// ---------- nieuwsbrief (Zoho Campaigns) ----------
+// Alleen na een aangevinkt, ongemarkeerd vakje. Zonder ingestelde secrets gebeurt er niets en blijft aanmelden gewoon werken.
+let zohoToken = { value: null, until: 0 };
+const ZOHO_DCS = ["eu", "com", "in", "com.au", "jp", "com.cn"];
+const zohoDc = env => (ZOHO_DCS.includes(env.ZOHO_DC) ? env.ZOHO_DC : "eu");
+async function zohoAccessToken(env) {
+  if (zohoToken.value && zohoToken.until > Date.now()) return zohoToken.value;
+  const res = await fetch(`https://accounts.zoho.${zohoDc(env)}/oauth/v2/token`, {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, signal: AbortSignal.timeout(4000),
+    body: new URLSearchParams({ grant_type: "refresh_token", client_id: env.ZOHO_CLIENT_ID, client_secret: env.ZOHO_CLIENT_SECRET, refresh_token: env.ZOHO_REFRESH_TOKEN })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!data.access_token) throw new Error("zoho_token");
+  zohoToken = { value: data.access_token, until: Date.now() + 50 * 60 * 1000 };
+  return zohoToken.value;
+}
+async function subscribeNewsletter(env, email) {
+  if (!env.ZOHO_LIST_KEY || !env.ZOHO_CLIENT_ID || !env.ZOHO_CLIENT_SECRET || !env.ZOHO_REFRESH_TOKEN) { log("newsletter_skipped"); return false; }
+  // Het contactinfo-formaat van Zoho is geen strikte JSON: alleen een gewoon e-mailadres doorlaten
+  if (!/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email)) return false;
+  try {
+    const res = await fetch(`https://campaigns.zoho.${zohoDc(env)}/api/v1.1/json/listsubscribe`, {
+      method: "POST", signal: AbortSignal.timeout(5000),
+      headers: { Authorization: `Zoho-oauthtoken ${await zohoAccessToken(env)}`, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ listkey: env.ZOHO_LIST_KEY, resfmt: "JSON", contactinfo: `{Contact Email:${email}}`, source: "wielerschema-app" })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) zohoToken = { value: null, until: 0 };
+    const ok = data.status === "success";
+    log(ok ? "newsletter_ok" : "newsletter_fail", { code: data.code ?? res.status });
+    return ok;
+  } catch { log("newsletter_error"); return false; }
+}
+
 async function register(request, env) {
   const body = await readJson(request);
   if (body.error) return json({ error: "invalid", message: "Ongeldige aanvraag." }, 400);
@@ -1009,6 +1106,7 @@ async function register(request, env) {
     return json({ error: "taken", message: "Deze gebruikersnaam is al in gebruik." }, 409);
   }
   if (emailResult.email) await saveEmail(env, id, emailResult.email);
+  if (emailResult.email && body.nieuwsbrief === true) await subscribeNewsletter(env, emailResult.email);
   await cleanup(env);
   const token = await createSession(env, id);
   log("register");
@@ -1459,6 +1557,7 @@ function activityLoad(a, intake) {
 }
 
 async function getAnalytics(url, env, user) {
+  const pro = await isPro(env, user.id);
   await maybeSyncIntervals(env, user.id);
   const asked = Number(url.searchParams.get("dagen"));
   const range = ANALYSE_DAGEN.includes(asked) ? asked : 84;
@@ -1568,28 +1667,31 @@ async function getAnalytics(url, env, user) {
   }
 
   return json({
-    dagen: range, vandaag: end, reeks,
+    dagen: range, vandaag: end,
+    reeks: pro ? reeks : reeks.map(p => ({ ...p, atl: null, tsb: null })),
     kaarten: {
-      ctl: round1(last.ctl), atl: round1(last.atl), tsb: round1(tsb),
-      vorm_label: !acts.length && !Object.keys(wellness).length ? null : tsb > 5 ? "Fris" : tsb >= -10 ? "Neutraal" : "Vermoeid",
+      ctl: round1(last.ctl), atl: pro ? round1(last.atl) : null, tsb: pro ? round1(tsb) : null,
+      vorm_label: !pro || (!acts.length && !Object.keys(wellness).length) ? null : tsb > 5 ? "Fris" : tsb >= -10 ? "Neutraal" : "Vermoeid",
       volume: { uren: round1(volumeUren), sessies: week.length },
       gewicht: weightDate ? { kg: round1(wellness[weightDate].weight), datum: weightDate } : null
     },
-    gereedheid: readiness ? { ...readiness, hrv, rhr, slaapschuld_uren: sleepDebt } : null,
-    belastingsrisico: risk ? { ...risk, groei_ctl_7d: round1(ramp) } : null,
-    belastingsverhouding: acwr == null ? null : {
+    gereedheid: pro && readiness ? { ...readiness, hrv, rhr, slaapschuld_uren: sleepDebt } : null,
+    belastingsrisico: pro && risk ? { ...risk, groei_ctl_7d: round1(ramp) } : null,
+    belastingsverhouding: !pro || acwr == null ? null : {
       acwr: Math.round(acwr * 100) / 100,
       label: acwr < 0.8 ? "Te weinig" : acwr <= 1.3 ? "Sweet spot" : "Pas op",
       eentonigheid: round1(monotony), weekbelasting: Math.round(acute), spanning: strain != null ? Math.round(strain) : null
     },
-    nacht: nights.length ? { laatste: nights[0], nachten: nights.slice().reverse(), slaapschuld_uren: sleepDebt, slaapdoel_uren: SLAAPDOEL_UREN, hrv, rhr } : null,
-    bronnen: { activiteiten: acts.length, nachten: nights.length, ...bronnen }
+    nacht: pro && nights.length ? { laatste: nights[0], nachten: nights.slice().reverse(), slaapschuld_uren: sleepDebt, slaapdoel_uren: SLAAPDOEL_UREN, hrv, rhr } : null,
+    bronnen: { activiteiten: acts.length, nachten: nights.length, ...bronnen },
+    pro
   });
 }
 
 async function questions(request, env, user) {
   const body = await readJson(request);
-  const c = cleanIntake(body.intake);
+  const pro = await isPro(env, user.id);
+  const c = cleanIntake(body.intake, pro);
   if (c.error) return json({ error: "intake", message: c.error }, 400);
   const gate = await aiAllowed(env, user);
   if (!gate.ok) return gate.res;
@@ -1604,7 +1706,8 @@ async function questions(request, env, user) {
 
 async function createPlan(request, env, user) {
   const body = await readJson(request);
-  const c = cleanIntake(body.intake);
+  const pro = await isPro(env, user.id);
+  const c = cleanIntake(body.intake, pro);
   if (c.error) return json({ error: "intake", message: c.error }, 400);
   const intake = c.intake;
   const answers = cleanAnswers(body.answers);
@@ -1612,7 +1715,7 @@ async function createPlan(request, env, user) {
   if (!gate.ok) return gate.res;
 
   const start = startMonday(today());
-  const weeks = planWeeks(intake, start);
+  const weeks = planWeeks(intake, start, pro);
   const cap = intake.uren_per_week * 60 * 1.05;
   const target = targetDate(intake);
   const goalText = !target ? "" : daysBetween(start, target) < weeks * 7
@@ -1804,6 +1907,9 @@ async function coachChat(request, env, user) {
   const checkinWeekNo = latest && !latest.checkin && latest.week_no < planRow.total_weeks &&
     today() >= addDays(planRow.start_date, latest.week_no * 7) ? latest.week_no : null;
   const checkinDue = checkinWeekNo !== null;
+  if (!(await isPro(env, user.id)) && !(await hit(env, `chat:u:${user.id}:${today()}`, FREE_CHAT_PER_DAY))) {
+    return json({ error: "chat_limit", upgrade: true, message: `Je hebt vandaag je ${FREE_CHAT_PER_DAY} gratis chatberichten gebruikt. Met de 8-wekenpas chat je ruimer. Morgen kun je weer gratis chatten.` }, 429);
+  }
   const gate = await aiAllowed(env, user);
   if (!gate.ok) return gate.res;
 
@@ -2290,7 +2396,8 @@ async function updateCredentials(request, env, user) {
   if (emailResult && emailResult.error) return json({ error: "email", message: emailResult.error }, 400);
   const currentEmail = await emailOf(env, user.id);
   const emailChanged = Boolean(emailResult) && emailResult.email !== currentEmail;
-  if (username === user.username && !newPassword && !emailChanged) {
+  const wantsNews = body.nieuwsbrief === true;
+  if (username === user.username && !newPassword && !emailChanged && !wantsNews) {
     return json({ error: "unchanged", message: "Pas een gebruikersnaam, e-mailadres of wachtwoord aan om op te slaan." }, 400);
   }
   if (!/^[a-z0-9._-]{3,30}$/.test(username)) {
@@ -2311,6 +2418,7 @@ async function updateCredentials(request, env, user) {
     .bind(username, salt, hash, user.id).run();
   if (emailChanged) await saveEmail(env, user.id, emailResult.email);
   const email = emailChanged ? emailResult.email : currentEmail;
+  if (wantsNews && email) await subscribeNewsletter(env, email);
   if (!newPassword) return json({ username, email });
 
   await env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.id).run();
@@ -2336,6 +2444,7 @@ async function exportAccount(env, user) {
     antwoorden_op_vragen: plan ? JSON.parse(plan.answers) : [],
     coachgesprekken: coachMessages,
     intervals_icu: intervals,
+    pas_verloopt: (await passExpiry(env, user.id)) ? new Date(await passExpiry(env, user.id)).toISOString() : null,
     schema: data
   }, 200, { "Content-Disposition": 'attachment; filename="wielerschema-gegevens.json"' });
 }
@@ -2358,6 +2467,7 @@ async function deleteAccount(request, env, user) {
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM account_profiles WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM user_emails WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM passes WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id)
   ]);
   log("account_deleted");

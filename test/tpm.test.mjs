@@ -65,6 +65,7 @@ test("chat en schema blijven onder 8000 tokens met 10 zware FIT-ritten", async (
 test("schema van 16 weken blijft onder 8000 tokens", async () => {
   const env = { DB: new FakeD1(), GROQ_API_KEY: "test" };
   const r = await api(env, "POST", "/api/register", { username: "lang", password: "een-lang-wachtwoord", consent: true });
+  env.DB.db.prepare("INSERT INTO passes (user_id, expires_at, granted_at) VALUES ((SELECT id FROM users LIMIT 1), ?, ?)").run(Date.now() + 8 * 7 * 86400000, Date.now());
   limitOn = true; calls = [];
   const plan = await api(env, "POST", "/api/plan/create", { intake: { ...INTAKE, datum: future(130) } }, r.cookie);
   assert.equal(plan.status, 200, JSON.stringify(plan.data));

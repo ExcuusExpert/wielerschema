@@ -37,6 +37,7 @@ test("analyse: belasting, vorm, nacht en gereedheid uit opgeslagen gegevens", as
   const env = { DB: new FakeD1(), GROQ_API_KEY: "x" };
   const r = await api(env, "POST", "/api/register", { username: "vol", password: "een-lang-wachtwoord", consent: true });
   const uid = env.DB.db.prepare("SELECT id FROM users").get().id;
+  env.DB.db.prepare("INSERT INTO passes (user_id, expires_at, granted_at) VALUES ((SELECT id FROM users LIMIT 1), ?, ?)").run(Date.now() + 8 * 7 * 86400000, Date.now());
   const ins = env.DB.db.prepare("INSERT INTO intervals_activities (user_id, activity_id, activity_date, data, updated_at) VALUES (?,?,?,?,?)");
   for (let i = 1; i <= 20; i += 2) ins.run(uid, "fit:" + i, day(-i), JSON.stringify({ elapsed_time: 3600, average_heartrate: 140, icu_training_load: 60, samples: Array(300).fill({ latitude: 53 }) }), 1);
   ins.run(uid, "fit:p", day(-1), JSON.stringify({ elapsed_time: 7200, average_watts: 200 }), 1); // geen plan/FTP -> schatting

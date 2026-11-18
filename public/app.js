@@ -433,6 +433,7 @@ function viewAuth(mode = "login") {
   const password = h("input", { type: "password", name: "password", autocomplete: mode === "login" ? "current-password" : "new-password", required: true, minlength: mode === "login" ? 1 : 10, maxlength: 200 });
   const consent = h("input", { type: "checkbox", name: "consent", required: mode === "register" });
   const email = h("input", { type: "email", name: "email", autocomplete: "email", maxlength: 254, placeholder: "naam@voorbeeld.nl" });
+  const news = h("input", { type: "checkbox", name: "nieuwsbrief" });
   const submit = h("button", { class: "btn", type: "submit", text: mode === "login" ? "Inloggen" : "Account maken" });
 
   const form = h("form", {
@@ -443,7 +444,7 @@ function viewAuth(mode = "login") {
       const done = busyButton(submit);
       try {
         const body = { username: username.value, password: password.value };
-        if (mode === "register") { body.consent = consent.checked; body.email = email.value.trim(); }
+        if (mode === "register") { body.consent = consent.checked; body.email = email.value.trim(); body.nieuwsbrief = news.checked && body.email !== ""; }
         const res = await api("POST", mode === "login" ? "/api/login" : "/api/register", body);
         state.user = res.username;
         await start();
@@ -455,7 +456,8 @@ function viewAuth(mode = "login") {
   },
   h("h2", { text: mode === "login" ? "Inloggen" : "Account maken" }),
   field("Gebruikersnaam", username, mode === "register" ? "Kies een naam om mee in te loggen." : null),
-  mode === "register" ? field("E-mailadres (optioneel)", email, "Alleen om later je wachtwoord te kunnen herstellen. Geen nieuwsbrief en geen reclame. Ben je jonger dan 16? Gebruik het adres van een ouder of verzorger.") : null,
+  mode === "register" ? field("E-mailadres (optioneel)", email, "Om later je wachtwoord te kunnen herstellen. Ben je jonger dan 16? Gebruik het adres van een ouder of verzorger.") : null,
+  mode === "register" ? h("label", { class: "check" }, news, h("span", { text: "Ja, stuur me af en toe de WielerSchema-nieuwsbrief (vul hierboven een e-mailadres in). Je kunt je altijd afmelden." })) : null,
   field("Wachtwoord", password, mode === "register" ? "Minstens 10 tekens. Herstel van je wachtwoord via e-mail komt later; vul daarom een e-mailadres in." : null),
   mode === "register"
     ? h("div", { class: "stack" },
@@ -565,7 +567,7 @@ function viewIntake(prefill) {
   const beperkingen = h("textarea", { rows: 2, maxlength: 300, placeholder: "Optioneel, bijvoorbeeld een oude blessure. Vul alleen in wat je kwijt wilt." }, p.beperkingen || "");
   const opmerkingen = h("textarea", { rows: 2, maxlength: 400, placeholder: "Optioneel, bijvoorbeeld: ik werk onregelmatig of train vooral buiten." }, p.opmerkingen || "");
   // Wedstrijden: tot 4, tot 20 weken vooruit
-  const MAX_RACES = 4;
+  const MAX_RACES = state.limieten?.wedstrijden || 4;
   const races = (p.wedstrijden || []).filter(r => r.datum >= addDays(todayIso(), 7) && r.datum <= addDays(todayIso(), MAX_HORIZON_DAYS)).map(r => ({ ...r }));
   const raceList = h("div", { class: "race-rows stack" });
   const addRace = h("button", { type: "button", class: "btn ghost", text: "Wedstrijd toevoegen" });
@@ -587,7 +589,7 @@ function viewIntake(prefill) {
   addRace.addEventListener("click", () => { races.push({ datum: "", naam: "", prioriteit: "B" }); renderRaces(); });
   const racesBlock = h("div", { class: "stack" },
     h("p", { class: "label-text", text: "Wedstrijden (optioneel)" }),
-    h("p", { class: "hint", text: "Heb je wedstrijden of evenementen in de komende 20 weken? De coach plant rustiger ervoor en laat je erna herstellen." }),
+    h("p", { class: "hint", text: "Heb je wedstrijden of evenementen in de komende 20 weken? De coach plant rustiger ervoor en laat je erna herstellen." + (state.pas?.actief ? "" : " Gratis kun je er 4 invullen, met de 8-wekenpas 15.") }),
     raceList, addRace);
   renderRaces();
   const stepNames = ["Doel", "Tijd", "Training"];
@@ -606,7 +608,7 @@ function viewIntake(prefill) {
       h("p", { class: "muted", text: "Vertel waar je naartoe wilt werken en op welk niveau je fietst." }),
       field("Wat wil je bereiken?", doel),
       field("Geboortedatum (DD-MM-JJJJ)", birthDate, "Je leeftijd helpt de coach het schema af te stemmen. Alleen je leeftijd, niet je geboortedatum, wordt met de AI gedeeld."),
-      field("Heb je een datum voor je doel?", datum, "Optioneel, tot 20 weken vooruit. Zonder datum maakt de coach een schema van 8 weken. Een schema duurt maximaal 16 weken; ligt je doel verder weg, dan bouwt de coach eerst op en maak je daarna een nieuw schema."),
+      field("Heb je een datum voor je doel?", datum, "Optioneel, tot 20 weken vooruit. Zonder datum maakt de coach een schema van 8 weken. Een schema duurt maximaal " + (state.pas?.actief ? "16" : "8 weken (met de 8-wekenpas 16)") + "; ligt je doel verder weg, dan bouwt de coach eerst op en maak je daarna een nieuw schema."),
       racesBlock,
       field("Hoe zou je je niveau omschrijven?", niveau)),
     h("section", { class: "wizard-panel stack", hidden: true },
@@ -2090,12 +2092,12 @@ function performanceChart(reeks) {
   const last = reeks[n - 1];
   return svgEl("svg", {
     viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
-    "aria-label": `Prestatiegrafiek: fitness ${nl(last.ctl)}, vermoeidheid ${nl(last.atl)}, vorm ${signed(last.tsb, 0)}`
+    "aria-label": last.atl == null ? `Prestatiegrafiek: fitness ${nl(last.ctl)}` : `Prestatiegrafiek: fitness ${nl(last.ctl)}, vermoeidheid ${nl(last.atl)}, vorm ${signed(last.tsb, 0)}`
   },
     ...grid,
     ...reeks.map((p, i) => p.load > 0 ? svgEl("rect", { x: x(i) - barW / 2, y: yBar(p.load), width: barW, height: H - pad.b - yBar(p.load), class: "chart-bar" }) : null),
     svgEl("path", { d: path("ctl"), class: "chart-line chart-ctl" }),
-    svgEl("path", { d: path("atl"), class: "chart-line chart-atl" }),
+    reeks.some(p => p.atl != null) ? svgEl("path", { d: path("atl"), class: "chart-line chart-atl" }) : null,
     labelAt(0), n > 2 ? labelAt(Math.floor((n - 1) / 2)) : null, n > 1 ? labelAt(n - 1) : null);
 }
 
@@ -2213,20 +2215,57 @@ function renderAnalytics(body, a) {
   body.append(
     h("div", { class: "stats-grid analytics-top" },
       analyticsStat("Fitness · CTL", hasLoad ? nl(k.ctl) : "–", "belasting 42 dagen"),
-      analyticsStat("Vermoeidheid · ATL", hasLoad ? nl(k.atl) : "–", "belasting 7 dagen"),
-      analyticsStat("Vorm · TSB", hasLoad ? signed(k.tsb, 0) : "–", k.vorm_label || ""),
+      analyticsStat("Vermoeidheid · ATL", hasLoad && k.atl != null ? nl(k.atl) : "–", a.pro ? "belasting 7 dagen" : "met 8-wekenpas"),
+      analyticsStat("Vorm · TSB", hasLoad && k.tsb != null ? signed(k.tsb, 0) : "–", a.pro ? (k.vorm_label || "") : "met 8-wekenpas"),
       analyticsStat("Volume · 7d", `${nl(k.volume.uren, 1)} u`, `${k.volume.sessies} ${k.volume.sessies === 1 ? "rit" : "ritten"}`),
       analyticsStat("Gewicht", k.gewicht ? `${nl(k.gewicht.kg, 1)} kg` : "–", k.gewicht ? "laatste meting" : "geen data")),
-    h("div", { class: "analytics-panels" }, readinessCard, riskCard, balanceCard),
+    a.pro ? h("div", { class: "analytics-panels" }, readinessCard, riskCard, balanceCard) : lockedAnalysisCard(),
     h("section", { class: "card stack" },
       h("div", { class: "row between" }, h("h2", { text: "Prestatiebeheer" }),
         h("div", { class: "chart-legend muted small-text" },
           h("span", { class: "legend-dot legend-bar" }), "belasting per dag",
           h("span", { class: "legend-dot legend-ctl" }), "fitness",
-          h("span", { class: "legend-dot legend-atl" }), "vermoeidheid")),
+          ...(a.pro ? [h("span", { class: "legend-dot legend-atl" }), "vermoeidheid"] : []))),
       hasLoad ? performanceChart(a.reeks) : h("p", { class: "muted", text: "Importeer een rit bij Activiteiten om je fitness en vermoeidheid te zien." })),
-    nightCard,
+    ...(a.pro ? [nightCard] : []),
     h("p", { class: "muted small-text", text: `Gebaseerd op ${a.bronnen.activiteiten} activiteiten en ${a.bronnen.nachten} nachten. Belasting komt uit Intervals.icu en anders uit een schatting met je FTP of maximale hartslag (${a.bronnen.vermogen} op vermogen, ${a.bronnen.hartslag} op hartslag, ${a.bronnen.schatting} grof geschat). Gereedheid en risico zijn indicatief en geen medisch advies.` }));
+}
+
+// ---------- 8-wekenpas ----------
+function passCard() {
+  const pas = state.pas || { actief: false };
+  if (pas.actief) {
+    return h("section", { class: "card stack" },
+      h("h2", { text: "8-wekenpas" }),
+      h("p", {}, "Je pas is actief tot ", h("strong", { text: new Date(pas.verloopt).toLocaleDateString("nl-NL", { day: "numeric", month: "long", year: "numeric" }) }), ". Je kunt schema’s van 16 weken maken, 15 wedstrijden invullen, ruim met de coach chatten en gebruikt de AI-ritanalyse en de diepe analyse."),
+      h("p", { class: "muted", text: "Verlengen kan altijd: de nieuwe 8 weken tellen op bij je lopende pas." }),
+      payBlock("Pas verlengen"));
+  }
+  return h("section", { class: "card stack" },
+    h("h2", { text: "8-wekenpas: € 9 voor 8 weken" }),
+    h("ul", {},
+      h("li", { text: "Schema’s tot 16 weken in plaats van 8" }),
+      h("li", { text: "Tot 15 wedstrijden (A/B/C) in plaats van 4" }),
+      h("li", { text: "Ruime chat met de coach in plaats van 10 berichten per dag" }),
+      h("li", { text: "Persoonlijke AI-analyse van je ritten" }),
+      h("li", { text: "Diepe analyse: vermoeidheid, vorm, slaap en HRV" })),
+    h("p", { class: "muted", text: "Rekentools en alle veiligheidsmaatregelen blijven voor iedereen gratis." }),
+    payBlock("Koop de 8-wekenpas"));
+}
+function payBlock(label) {
+  const link = state.betaallink;
+  return h("div", { class: "stack" },
+    h("ol", {},
+      h("li", {}, link ? h("a", { href: link, target: "_blank", rel: "noopener", text: "Betaal € 9 via Tikkie" }) : "Betaal € 9 via Tikkie (de link verschijnt hier zodra die is ingesteld)"),
+      h("li", {}, "Zet je gebruikersnaam ", h("strong", { text: state.user || "" }), " in de omschrijving."),
+      h("li", { text: "Zodra de betaling binnen is, zet ik je pas aan. Laad daarna de pagina opnieuw." })),
+    h("p", { class: "muted small-text" }, "Vragen? Mail ", h("a", { href: "mailto:hessel@wielerschema.me", text: "hessel@wielerschema.me" }), "."));
+}
+function lockedAnalysisCard() {
+  return h("section", { class: "card stack" },
+    h("h2", { text: "Diepe analyse met de 8-wekenpas" }),
+    h("p", { class: "muted", text: "Met de pas zie je je vermoeidheid, vorm, gereedheid om te trainen, belastingsverhouding en je nachten (slaap, HRV en rusthartslag)." }),
+    h("button", { class: "btn", type: "button", text: "Bekijk de 8-wekenpas", onclick: () => viewAccount() }));
 }
 
 // ---------- account ----------
@@ -2247,6 +2286,7 @@ function viewAccount() {
   const currentPassword = h("input", { type: "password", autocomplete: "current-password", required: true });
   const newPassword = h("input", { type: "password", autocomplete: "new-password", minlength: 10, maxlength: 200 });
   const accountEmail = h("input", { type: "email", autocomplete: "email", maxlength: 254, placeholder: "naam@voorbeeld.nl", value: state.email || "" });
+  const accountNews = h("input", { type: "checkbox", id: "account-news" });
   const credentialsError = h("p", { class: "error", role: "alert" });
   const credentialsStatus = h("p", { class: "muted", role: "status" });
   const saveCredentials = h("button", { class: "btn", type: "submit", text: "Accountgegevens opslaan" });
@@ -2289,6 +2329,7 @@ function viewAccount() {
       h("p", { class: "muted", text: "Haalt ingewikkelde cijfers en analyses weg en toont trainingszones in gewone woorden. De coach schrijft dan ook in eenvoudige taal. Handig voor jonge renners of als je liever geen cijfers ziet." }),
       h("label", { class: "daybox", for: "simple-mode" }, simpleBox, h("span", { text: "Eenvoudige weergave gebruiken" })),
       simpleStatus),
+    passCard(),
     h("section", { class: "card stack" },
       h("p", {}, "Ingelogd als ", loggedInName),
       h("p", {}, h("a", { class: "btn ghost", href: "/api/account/export", download: "wielerschema-gegevens.json", text: "Download mijn gegevens (JSON)" }))),
@@ -2329,7 +2370,7 @@ function viewAccount() {
         const done = busyButton(saveCredentials);
         try {
           const result = await api("POST", "/api/account/credentials", {
-            username: username.value, email: accountEmail.value.trim(), current_password: currentPassword.value, new_password: newPassword.value
+            username: username.value, email: accountEmail.value.trim(), nieuwsbrief: accountNews.checked && accountEmail.value.trim() !== "", current_password: currentPassword.value, new_password: newPassword.value
           });
           state.user = result.username;
           state.email = result.email || "";
@@ -2349,6 +2390,7 @@ function viewAccount() {
     h("h2", { text: "Inloggegevens" }),
     field("Inloggebruikersnaam", username),
     field("E-mailadres (voor wachtwoord vergeten, optioneel)", accountEmail, state.email ? "Laat dit leeg om je e-mailadres te wissen." : "Je hebt nog geen e-mailadres. Zonder e-mailadres kunnen we je wachtwoord later niet herstellen."),
+    h("label", { class: "check", for: "account-news" }, accountNews, h("span", { text: "Ik wil de WielerSchema-nieuwsbrief ontvangen op dit e-mailadres. Je kunt je altijd afmelden." })),
     field("Huidig wachtwoord (verplicht om wijzigingen op te slaan)", currentPassword),
     field("Nieuw wachtwoord (optioneel, minstens 10 tekens)", newPassword),
     credentialsError, credentialsStatus, saveCredentials),
@@ -2382,6 +2424,9 @@ async function start() {
     const me = await api("GET", "/api/me");
     state.user = me.username;
     state.email = me.email || "";
+    state.pas = me.pas || { actief: false };
+    state.limieten = me.limieten || null;
+    state.betaallink = me.betaallink || "";
     state.data = await api("GET", "/api/plan");
     const account = await api("GET", "/api/account/profile");
     state.profile = account.profile;

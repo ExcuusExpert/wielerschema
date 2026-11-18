@@ -38,6 +38,7 @@ const makeEnv = () => ({ DB: new FakeD1(), GROQ_API_KEY: "x" });
 
 test("wedstrijden: tot 20 weken vooruit, schema maximaal 16 weken, wedstrijd binnen het schema wordt een evenement", async () => {
   const env = makeEnv(); const cookie = await signup(env);
+  env.DB.db.prepare("INSERT INTO passes (user_id, expires_at, granted_at) VALUES ((SELECT id FROM users LIMIT 1), ?, ?)").run(Date.now() + 8 * 7 * 86400000, Date.now());
   const races = [{ datum: future(21), naam: "Ronde van Bozum", prioriteit: "B" }, { datum: future(130), naam: "Eindrit", prioriteit: "A" }];
   prompts = [];
   const r = await api(env, "POST", "/api/plan/create", { intake: base({ wedstrijden: races }) }, cookie);

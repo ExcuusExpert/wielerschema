@@ -32,6 +32,33 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 
 Nog niet: wachtwoord vergeten via e-mail (het e-mailadres wordt wel al, optioneel, bewaard), automatische koppelingen met Garmin, Strava of Wahoo. Intervals.icu vereist OAuth-secrets en een goedgekeurde app.
 
+## 8-wekenpas (betaalde functies)
+
+Gratis: schema tot 8 weken, 4 wedstrijden, 10 chatberichten per dag, basisanalyse. Met pas (€ 9 voor 8 weken): schema tot 16 weken, 15 wedstrijden, 60 AI-aanvragen per dag, AI-ritanalyse en diepe analyse (vermoeidheid, vorm, gereedheid, slaap en HRV). Rekentools en veiligheidsregels blijven voor iedereen gelijk. De limieten staan bovenin `src/worker.js` (`FREE_CHAT_PER_DAY`, `AI_PRO_PER_USER_PER_DAY`, `PRO_MAX_RACES`, `FREE_PLAN_WEEKS`). De gezamenlijke limiet van 100 AI-aanvragen per dag geldt ook voor pashouders.
+
+Betalen gaat via een aparte Tikkie-link van € 9 (variabele `PAS_URL`; `TIKKIE_URL` blijft de steunknop). Een pas wordt met de hand aangezet nadat de betaling binnen is: open `https://wielerschema.me/beheer.html`, vul je beheerderstoken (secret `ADMIN_TOKEN`, minstens 24 tekens) en de gebruikersnaam in en kies Pas aanzetten. Daar staat ook de lijst met actieve passen en kun je een pas intrekken. Kan ook met curl:
+
+```
+curl -X POST https://wielerschema.me/api/admin/pass \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" -H "Content-Type: application/json" \
+  -d '{"username":"gebruikersnaam","weeks":8,"note":"Tikkie 17-11"}'
+```
+
+Opnieuw aanroepen verlengt: de nieuwe 8 weken komen na de lopende pas.
+
+## Nieuwsbrief bij aanmelden
+
+Bij het aanmaken van een account en bij Account staat een vakje (standaard uit) voor de nieuwsbrief. Alleen aangevinkt en met e-mailadres meldt de worker het adres aan via de Zoho Campaigns API. Stel deze secrets in (Zoho API Console, Self Client, scope `ZohoCampaigns.contact.UPDATE`; standaard datacenter `eu`, aan te passen met `ZOHO_DC`):
+
+```
+npx wrangler secret put ZOHO_LIST_KEY
+npx wrangler secret put ZOHO_CLIENT_ID
+npx wrangler secret put ZOHO_CLIENT_SECRET
+npx wrangler secret put ZOHO_REFRESH_TOKEN
+```
+
+Zonder deze secrets gebeurt er niets en werkt aanmelden gewoon.
+
 ## Veiligheid en vangrails
 
 - De AI schrijft nooit rechtstreeks naar de database: de worker controleert elk antwoord. Trainingen en wijzigingen worden opgeschoond en de weektotalen begrensd op het maximale aantal uren; een concreet genoemd evenement kan op de opgegeven dag worden gezet.

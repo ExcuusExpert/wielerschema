@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Beheer | WielerSchema</title>
+  <link rel="icon" href="logo.png" type="image/png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="wrap">
+    <section class="card stack">
+      <h1>Beheer: 8-wekenpas</h1>
+      <p class="muted">Alleen voor de beheerder. Het token blijft alleen in dit venster en wordt nergens opgeslagen.</p>
+      <label class="field">Beheerderstoken<input id="token" type="password" autocomplete="off"></label>
+      <label class="field">Gebruikersnaam<input id="user" type="text" autocapitalize="none" autocomplete="off"></label>
+      <label class="field">Notitie (optioneel, bijv. “Tikkie 17-11”)<input id="note" type="text" maxlength="120"></label>
+      <div class="row">
+        <button id="grant" class="btn" type="button">Pas aanzetten of verlengen (8 weken)</button>
+        <button id="revoke" class="btn ghost" type="button">Pas intrekken</button>
+        <button id="refresh" class="btn ghost" type="button">Lijst vernieuwen</button>
+      </div>
+      <p id="msg" role="status"></p>
+    </section>
+    <section class="card stack">
+      <h2>Actieve passen</h2>
+      <ul id="list"></ul>
+    </section>
+  </main>
+  <script src="beheer.js"></script>
+</body>
+</html>

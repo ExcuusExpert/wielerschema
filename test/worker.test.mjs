@@ -831,6 +831,7 @@ test("oude import- en dagmetingstabellen worden verwijderd en de endpoints zijn 
 test("schema maken: vangrails op dagen, minuten en tekst", async () => {
   const env = makeEnv();
   const cookie = await signup(env);
+  env.DB.db.prepare("INSERT INTO passes (user_id, expires_at, granted_at) VALUES ((SELECT id FROM users LIMIT 1), ?, ?)").run(Date.now() + 8 * 7 * 86400000, Date.now());
   const r = await api(env, "POST", "/api/plan/create", { intake: INTAKE, answers: [{ vraag: "Hoeveel uur?", antwoord: "4 uur" }] }, { cookie });
   assert.equal(r.status, 200, JSON.stringify(r.data));
   const { plan, weeks } = r.data;
