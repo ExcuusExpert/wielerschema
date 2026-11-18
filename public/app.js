@@ -329,7 +329,7 @@ function supportCard() {
   const button = h("a", { class: "btn", target: "_blank", rel: "noopener", href: state.supportUrl || "#", text: supportLabel() });
   const card = h("section", { class: "card stack support-card", hidden: !state.supportUrl },
     h("h2", { text: "Vind je WielerSchema handig?" }),
-    h("p", { text: "Houd het gratis & zonder banners 🚴‍♂️ Geen abonnementen en geen irritante banners. Met een vrijwillige bijdrage (via Tikkie) help je de server en AI-coach draaiende te houden." }),
+    h("p", { text: "De basis van WielerSchema blijft gratis en zonder banners. Met een vrijwillige bijdrage via Tikkie help je de server en de AI-coach draaiende te houden." }),
     h("div", { class: "row" }, button));
   card.button = button;
   supportCards.push(card);
@@ -507,6 +507,7 @@ function viewHome() {
   renderNav();
   show(
     h("section", { class: "landing-hero" },
+      h("div", { class: "landing-copy" },
       h("p", { class: "eyebrow", text: "TRAIN MET EEN PLAN" }),
       h("h1", {}, "Jouw wielerdoel. ", h("span", { text: "Een plan dat bij jou past." })),
       h("p", { class: "landing-lede", text: "Maak een overzichtelijk trainingsschema, bespreek trainingen met je coach en stuur je plan bij naarmate je verder komt." }),
@@ -514,6 +515,7 @@ function viewHome() {
         h("button", { class: "btn", type: "button", text: "Maak mijn schema", onclick: () => viewAuth("register") }),
         h("button", { class: "btn ghost", type: "button", text: "Ik heb al een account", onclick: () => viewAuth("login") })),
       h("p", { class: "landing-note", text: "Voor beginnende en ervaren wielrenners, inclusief jeugdrenners van 12 tot 18 jaar." })),
+      heroProfile()),
     h("section", { class: "landing-grid", "aria-label": "Zo werkt WielerSchema" },
       h("article", { class: "landing-card" },
         h("span", { class: "landing-number", text: "01" }),
@@ -2056,6 +2058,23 @@ function raceHeader(plan, week) {
 const nl = (n, digits = 0) => (n === null || n === undefined ? "–" : Number(n).toLocaleString("nl-NL", { minimumFractionDigits: digits, maximumFractionDigits: digits }));
 const signed = (n, digits = 1) => (n === null || n === undefined ? "–" : `${n > 0 ? "+" : ""}${nl(n, digits)}`);
 const hoursText = hours => { const m = Math.round(hours * 60); return `${Math.floor(m / 60)} u ${String(m % 60).padStart(2, "0")} min`; };
+// Voorbeeldtraining op de startpagina: zo ziet een training in je schema eruit
+function heroProfile() {
+  const parts = [[15, 70, "#9ab786"], [10, 160, "#3e5b2a"], [5, 40, "#9ab786"], [10, 160, "#3e5b2a"], [5, 40, "#9ab786"], [10, 160, "#3e5b2a"], [15, 70, "#9ab786"]];
+  const unit = 372 / 70, base = 196;
+  let x = 24;
+  const bars = parts.map(([min, height, color]) => {
+    const bar = svgEl("rect", { x: x + 1.5, y: base - height, width: min * unit - 3, height, rx: 5, fill: color });
+    x += min * unit;
+    return bar;
+  });
+  const label = (cx, text, anchor = "middle") => svgEl("text", { x: cx, y: base + 22, class: "hero-profile-label", "text-anchor": anchor }, document.createTextNode(text));
+  const svg = svgEl("svg", { viewBox: "0 0 420 232", class: "hero-profile-svg", role: "img", "aria-label": "Voorbeeld van een training: warming-up, drie intervallen van 10 minuten en cooling-down" },
+    svgEl("line", { x1: 24, x2: 396, y1: base, y2: base, class: "hero-profile-base" }),
+    ...bars,
+    label(24, "Warming-up", "start"), label(210, "3 × 10 min drempel"), label(396, "Cooling-down", "end"));
+  return h("figure", { class: "hero-profile" }, svg, h("figcaption", { text: "Zo ziet een training in je schema eruit." }));
+}
 function svgEl(tag, attrs, ...kids) {
   const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
   for (const [key, value] of Object.entries(attrs || {})) el.setAttribute(key, String(value));
@@ -2235,13 +2254,13 @@ function renderAnalytics(body, a) {
 function passCard() {
   const pas = state.pas || { actief: false };
   if (pas.actief) {
-    return h("section", { class: "card stack" },
+    return h("section", { class: "card stack pass-card" },
       h("h2", { text: "8-wekenpas" }),
       h("p", {}, "Je pas is actief tot ", h("strong", { text: new Date(pas.verloopt).toLocaleDateString("nl-NL", { day: "numeric", month: "long", year: "numeric" }) }), ". Je kunt schema’s van 16 weken maken, 15 wedstrijden invullen, ruim met de coach chatten en gebruikt de AI-ritanalyse en de diepe analyse."),
       h("p", { class: "muted", text: "Verlengen kan altijd: de nieuwe 8 weken tellen op bij je lopende pas." }),
       payBlock("Pas verlengen"));
   }
-  return h("section", { class: "card stack" },
+  return h("section", { class: "card stack pass-card" },
     h("h2", { text: "8-wekenpas: € 9 voor 8 weken" }),
     h("ul", {},
       h("li", { text: "Schema’s tot 16 weken in plaats van 8" }),

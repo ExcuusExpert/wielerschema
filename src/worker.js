@@ -711,33 +711,52 @@ async function grantPass(env, username, weeks, note) {
   ).bind(user.id, expires, now, cleanText(note, 120)).run();
   return expires;
 }
-async function adminAllowed(request, env) {
-  const key = typeof env.ADMIN_TOKEN === "string" ? env.ADMIN_TOKEN : "";
-  const given = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
-  return key.length >= 24 && (await safeEqual(await sha256Hex(given), await sha256Hex(key)));
-}
-// Beheer: pas aanzetten, verlengen of intrekken (POST) en lijst van actieve passen (GET)
-async function adminPass(request, env) {
-  if (!(await adminAllowed(request, env))) return json({ error: "unauthorized" }, 401, { "Cache-Control": "no-store" });
-  if (request.method === "GET") {
-    const rows = await env.DB.prepare("SELECT u.username AS username, p.expires_at AS expires_at FROM passes p JOIN users u ON u.id = p.user_id WHERE p.expires_at > ? ORDER BY p.expires_at ASC")
-      .bind(Date.now()).all();
-    return json({ passen: (rows.results || []).map(r => ({ gebruiker: r.username, verloopt: new Date(r.expires_at).toISOString() })) }, 200, { "Cache-Control": "no-store" });
+// ---------- beheer ----------
+// Beheerders zijn gewone accounts waarvan de gebruikersnaam in de variabele ADMIN_USERS staat (komma-gescheiden).
+const isAdmin = (env, user) => String(env.ADMIN_USERS || "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean).includes(user.username);
+async function adminRoute(request, env, user, path, method) {
+  if (!isAdmin(env, user)) return json({ error: "forbidden" }, 403, { "Cache-Control": "no-store" });
+  const noStore = { "Cache-Control": "no-store" };
+  if (path === "/api/admin/users" && method === "GET") {
+    const rows = (await env.DB.prepare(
+      `SELECT u.username AS username, u.created_at AS created_at, p.expires_at AS pas, pl.start_date AS plan_start, pl.total_weeks AS plan_weken,
+         (SELECT COUNT(*) FROM intervals_connections c WHERE c.user_id = u.id) AS koppeling
+       FROM users u LEFT JOIN passes p ON p.user_id = u.id LEFT JOIN plans pl ON pl.user_id = u.id
+       ORDER BY u.created_at DESC LIMIT 1000`).all()).results || [];
+    const now = Date.now();
+    const accounts = rows.map(r => ({
+      gebruiker: r.username, aangemaakt: new Date(r.created_at).toISOString(),
+      pas_tot: r.pas && r.pas > now ? new Date(r.pas).toISOString() : null,
+      pas_verlopen: !!(r.pas && r.pas <= now),
+      schema: r.plan_start ? { start: r.plan_start, weken: r.plan_weken } : null,
+      koppeling: r.koppeling > 0, beheerder: isAdmin(env, { username: r.username })
+    }));
+    return json({ accounts, totaal: accounts.length, met_pas: accounts.filter(a => a.pas_tot).length }, 200, noStore);
   }
+  if (method !== "POST") return json({ error: "not_found" }, 404);
   const body = await readJson(request);
   const username = typeof body.username === "string" ? body.username.trim().toLowerCase().slice(0, 60) : "";
-  if (body.intrekken === true) {
-    const user = await env.DB.prepare("SELECT id FROM users WHERE username = ?").bind(username).first();
-    if (!user) return json({ error: "not_found", message: "Gebruiker niet gevonden." }, 404);
-    await env.DB.prepare("DELETE FROM passes WHERE user_id = ?").bind(user.id).run();
-    log("pass_revoked");
-    return json({ ok: true, ingetrokken: true });
+  const target = await env.DB.prepare("SELECT id FROM users WHERE username = ?").bind(username).first();
+  if (!target) return json({ error: "not_found", message: "Gebruiker niet gevonden." }, 404);
+  if (path === "/api/admin/pass") {
+    if (body.intrekken === true) {
+      await env.DB.prepare("DELETE FROM passes WHERE user_id = ?").bind(target.id).run();
+      log("pass_revoked");
+      return json({ ok: true, ingetrokken: true });
+    }
+    const weeks = Number.isInteger(body.weeks) && body.weeks >= 1 && body.weeks <= 52 ? body.weeks : PASS_WEEKS;
+    const expires = await grantPass(env, username, weeks, body.note);
+    log("pass_granted", { weeks });
+    return json({ ok: true, verloopt: new Date(expires).toISOString() });
   }
-  const weeks = Number.isInteger(body.weeks) && body.weeks >= 1 && body.weeks <= 52 ? body.weeks : PASS_WEEKS;
-  const expires = await grantPass(env, username, weeks, body.note);
-  if (!expires) return json({ error: "not_found", message: "Gebruiker niet gevonden." }, 404);
-  log("pass_granted", { weeks });
-  return json({ ok: true, verloopt: new Date(expires).toISOString() });
+  if (path === "/api/admin/delete") {
+    if (username === user.username || isAdmin(env, { username })) return json({ error: "protected", message: "Een beheerdersaccount verwijder je zelf via Account." }, 400);
+    if (body.bevestig !== username) return json({ error: "confirm", message: "Typ de gebruikersnaam ter bevestiging." }, 400);
+    await deleteUserData(env, target.id);
+    log("account_deleted_by_admin");
+    return json({ ok: true });
+  }
+  return json({ error: "not_found" }, 404);
 }
 
 async function aiAllowed(env, user) {
@@ -993,7 +1012,6 @@ async function handleApi(request, env, url) {
   if (path === "/api/register" && method === "POST") return register(request, env);
   if (path === "/api/login" && method === "POST") return login(request, env);
   if (path === "/api/intervals/callback" && method === "GET") return intervalsCallback(request, env);
-  if (path === "/api/admin/pass" && (method === "POST" || method === "GET")) return adminPass(request, env);
 
   const user = await currentUser(env, request);
   if (path === "/api/logout" && method === "POST") {
@@ -1002,10 +1020,11 @@ async function handleApi(request, env, url) {
     return json({ ok: true }, 200, { "Set-Cookie": sessionCookie("", 0) });
   }
   if (!user) return json({ error: "unauthorized" }, 401);
+  if (path.startsWith("/api/admin/")) return adminRoute(request, env, user, path, method);
 
   if (path === "/api/me" && method === "GET") {
     const expires = await passExpiry(env, user.id);
-    return json({ username: user.username, email: await emailOf(env, user.id),
+    return json({ username: user.username, email: await emailOf(env, user.id), beheerder: isAdmin(env, user),
       pas: { actief: expires !== null, verloopt: expires ? new Date(expires).toISOString() : null },
       limieten: { weken: expires ? MAX_PLAN_WEEKS : FREE_PLAN_WEEKS, wedstrijden: expires ? PRO_MAX_RACES : MAX_RACES, chat_per_dag: expires ? null : FREE_CHAT_PER_DAY },
       betaallink: supportUrl(env, "PAS_URL") });
@@ -2449,27 +2468,31 @@ async function exportAccount(env, user) {
   }, 200, { "Content-Disposition": 'attachment; filename="wielerschema-gegevens.json"' });
 }
 
+async function deleteUserData(env, userId) {
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM plan_events WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM weeks WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM plans WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM coach_suggestions WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM coach_messages WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM intervals_connections WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM intervals_activities WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM intervals_wellness WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM intervals_oauth_states WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM account_profiles WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM user_emails WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM passes WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM users WHERE id = ?").bind(userId)
+  ]);
+}
+
 async function deleteAccount(request, env, user) {
   const body = await readJson(request);
   const password = typeof body.password === "string" ? body.password.slice(0, 200) : "";
   const row = await env.DB.prepare("SELECT salt, hash FROM users WHERE id = ?").bind(user.id).first();
   if (!(await safeEqual(await hashPassword(password, row.salt), row.hash))) return json({ error: "credentials", message: "Wachtwoord klopt niet." }, 401);
-  await env.DB.batch([
-    env.DB.prepare("DELETE FROM plan_events WHERE user_id = ?").bind(user.id),
-    env.DB.prepare("DELETE FROM weeks WHERE user_id = ?").bind(user.id),
-    env.DB.prepare("DELETE FROM plans WHERE user_id = ?").bind(user.id),
-    env.DB.prepare("DELETE FROM coach_suggestions WHERE user_id = ?").bind(user.id),
-    env.DB.prepare("DELETE FROM coach_messages WHERE user_id = ?").bind(user.id),
-    env.DB.prepare("DELETE FROM intervals_connections WHERE user_id = ?").bind(user.id),
-    env.DB.prepare("DELETE FROM intervals_activities WHERE user_id = ?").bind(user.id),
-    env.DB.prepare("DELETE FROM intervals_wellness WHERE user_id = ?").bind(user.id),
-    env.DB.prepare("DELETE FROM intervals_oauth_states WHERE user_id = ?").bind(user.id),
-    env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.id),
-    env.DB.prepare("DELETE FROM account_profiles WHERE user_id = ?").bind(user.id),
-    env.DB.prepare("DELETE FROM user_emails WHERE user_id = ?").bind(user.id),
-    env.DB.prepare("DELETE FROM passes WHERE user_id = ?").bind(user.id),
-    env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id)
-  ]);
+  await deleteUserData(env, user.id);
   log("account_deleted");
 
 async function deleteCoachMessages(env, user) {

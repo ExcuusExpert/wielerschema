@@ -8,24 +8,44 @@
   <link rel="icon" href="logo.png" type="image/png">
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
-  <main class="wrap">
-    <section class="card stack">
-      <h1>Beheer: 8-wekenpas</h1>
-      <p class="muted">Alleen voor de beheerder. Het token blijft alleen in dit venster en wordt nergens opgeslagen.</p>
-      <label class="field">Beheerderstoken<input id="token" type="password" autocomplete="off"></label>
-      <label class="field">Gebruikersnaam<input id="user" type="text" autocapitalize="none" autocomplete="off"></label>
-      <label class="field">Notitie (optioneel, bijv. “Tikkie 17-11”)<input id="note" type="text" maxlength="120"></label>
-      <div class="row">
-        <button id="grant" class="btn" type="button">Pas aanzetten of verlengen (8 weken)</button>
-        <button id="revoke" class="btn ghost" type="button">Pas intrekken</button>
-        <button id="refresh" class="btn ghost" type="button">Lijst vernieuwen</button>
-      </div>
-      <p id="msg" role="status"></p>
+<body class="admin-body">
+  <header class="admin-top">
+    <a class="brand" href="/" aria-label="WielerSchema startpagina"><img class="brand-logo" src="logo.png" alt="WielerSchema"></a>
+    <div class="admin-top-right"><span id="who"></span><button id="logout" class="btn ghost small" type="button" hidden>Uitloggen</button></div>
+  </header>
+  <main class="admin-wrap">
+    <section id="login" class="card stack admin-login" hidden>
+      <h1>Beheer</h1>
+      <p class="muted">Log in met je eigen WielerSchema-account. Alleen beheerders komen verder.</p>
+      <form id="login-form" class="stack">
+        <label class="field"><span>Gebruikersnaam</span><input id="u" type="text" autocomplete="username" autocapitalize="none" required></label>
+        <label class="field"><span>Wachtwoord</span><input id="p" type="password" autocomplete="current-password" required></label>
+        <button class="btn" type="submit">Inloggen</button>
+      </form>
+      <p id="login-msg" class="admin-msg" role="alert"></p>
     </section>
-    <section class="card stack">
-      <h2>Actieve passen</h2>
-      <ul id="list"></ul>
+
+    <section id="denied" class="card stack admin-login" hidden>
+      <h1>Geen toegang</h1>
+      <p>Dit account is geen beheerder. Log uit en probeer een ander account.</p>
+    </section>
+
+    <section id="dash" hidden>
+      <h1>Beheer</h1>
+      <div class="admin-stats">
+        <div class="card"><strong id="n-total">–</strong><span>accounts</span></div>
+        <div class="card"><strong id="n-pas">–</strong><span>met actieve pas</span></div>
+        <div class="card"><strong id="n-new">–</strong><span>nieuw (7 dagen)</span></div>
+      </div>
+      <div class="card stack">
+        <div class="admin-tools">
+          <label class="field admin-search"><span class="sr-only">Zoek een gebruiker</span><input id="q" type="search" placeholder="Zoek op gebruikersnaam" autocomplete="off"></label>
+          <label class="check"><input id="only-pas" type="checkbox"><span>Alleen met pas</span></label>
+          <button id="refresh" class="btn ghost small" type="button">Vernieuwen</button>
+        </div>
+        <p id="msg" class="admin-msg" role="status"></p>
+        <div class="admin-list" id="list"></div>
+      </div>
     </section>
   </main>
   <script src="beheer.js"></script>

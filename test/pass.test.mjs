@@ -35,21 +35,26 @@ async function api(env, method, path, body, cookie) {
 }
 const signup = async (env, name = "renner") => (await api(env, "POST", "/api/register", { username: name, password: "een-lang-wachtwoord", consent: true })).cookie;
 const makeEnv = () => ({ DB: new FakeD1(), GROQ_API_KEY: "x" });
-const ADMIN = "a".repeat(32);
-const grant = (env, username, body = {}, token = ADMIN) => worker.fetch(new Request(BASE + "/api/admin/pass", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "CF-Connecting-IP": "10.9.9.9" }, body: JSON.stringify({ username, ...body }) }), env);
+const admins = new WeakMap();
+async function adminCookie(env) { if (!admins.has(env)) admins.set(env, await signup(env, "beheer", "10.7.7.7")); return admins.get(env); }
+const grant = async (env, username, body = {}) => { const r = await api(env, "POST", "/api/admin/pass", { username, ...body }, await adminCookie(env)); return { status: r.status, json: async () => r.data }; };
 const races = count => Array.from({ length: count }, (_, i) => ({ datum: future(14 + i * 3), naam: `Race ${i + 1}`, prioriteit: "B" }));
 
-test("pas: admin-endpoint weigert een verkeerd of ontbrekend token en een te kort secret", async () => {
-  const env = { ...makeEnv(), ADMIN_TOKEN: ADMIN };
-  await signup(env, "renner");
-  assert.equal((await grant(env, "renner", {}, "fout")).status, 401);
-  assert.equal((await grant({ ...env, ADMIN_TOKEN: undefined }, "renner", {}, "")).status, 401);
-  assert.equal((await grant({ ...env, ADMIN_TOKEN: "kort" }, "renner", {}, "kort")).status, 401);
+test("beheer: alleen ingelogde beheerders komen erin, anderen niet", async () => {
+  const env = { ...makeEnv(), ADMIN_USERS: "Beheer, anders" };
+  const cookie = await signup(env, "renner", "10.1.1.1");
+  assert.equal((await api(env, "GET", "/api/admin/users")).status, 401, "niet ingelogd");
+  assert.equal((await api(env, "GET", "/api/admin/users", undefined, cookie)).status, 403, "gewoon account");
+  assert.equal((await api(env, "POST", "/api/admin/pass", { username: "renner" }, cookie)).status, 403);
+  assert.equal((await api(env, "POST", "/api/admin/delete", { username: "renner", bevestig: "renner" }, cookie)).status, 403);
+  assert.equal((await api({ ...env, ADMIN_USERS: "" }, "GET", "/api/admin/users", undefined, await adminCookie(env))).status, 403, "zonder ADMIN_USERS is niemand beheerder");
+  assert.equal((await api(env, "GET", "/api/me", undefined, cookie)).data.beheerder, false);
+  assert.equal((await api(env, "GET", "/api/me", undefined, await adminCookie(env))).data.beheerder, true);
   assert.equal((await grant(env, "bestaatniet")).status, 404);
 });
 
 test("pas: activeren duurt 8 weken, verlengen telt op en /api/me toont de status en limieten", async () => {
-  const env = { ...makeEnv(), ADMIN_TOKEN: ADMIN };
+  const env = { ...makeEnv(), ADMIN_USERS: "beheer" };
   const cookie = await signup(env);
   let me = await api(env, "GET", "/api/me", undefined, cookie);
   assert.equal(me.data.pas.actief, false);
@@ -65,7 +70,7 @@ test("pas: activeren duurt 8 weken, verlengen telt op en /api/me toont de status
 });
 
 test("pas: een verlopen pas telt niet meer mee", async () => {
-  const env = { ...makeEnv(), ADMIN_TOKEN: ADMIN };
+  const env = { ...makeEnv(), ADMIN_USERS: "beheer" };
   const cookie = await signup(env);
   await grant(env, "renner");
   env.DB.db.prepare("UPDATE passes SET expires_at = ?").run(Date.now() - 1000);
@@ -73,7 +78,7 @@ test("pas: een verlopen pas telt niet meer mee", async () => {
 });
 
 test("pas: gratis maximaal 4 wedstrijden en 8 weken, met pas 15 wedstrijden en 16 weken", async () => {
-  const env = { ...makeEnv(), ADMIN_TOKEN: ADMIN };
+  const env = { ...makeEnv(), ADMIN_USERS: "beheer" };
   const cookie = await signup(env);
   const tooMany = await api(env, "POST", "/api/plan/create", { intake: base({ wedstrijden: races(5) }) }, cookie);
   assert.equal(tooMany.status, 400);
@@ -92,7 +97,7 @@ test("pas: gratis maximaal 4 wedstrijden en 8 weken, met pas 15 wedstrijden en 1
 });
 
 test("pas: gratis chat stopt na 10 berichten per dag, met pas niet", async () => {
-  const env = { ...makeEnv(), ADMIN_TOKEN: ADMIN };
+  const env = { ...makeEnv(), ADMIN_USERS: "beheer" };
   const cookie = await signup(env);
   assert.equal((await api(env, "POST", "/api/plan/create", { intake: base() }, cookie)).status, 200);
   const chat = () => api(env, "POST", "/api/coach/chat", { week_no: 1, day_no: 0, bericht: "Hoe voel je rustige duur?", global: true }, cookie);
@@ -106,7 +111,7 @@ test("pas: gratis chat stopt na 10 berichten per dag, met pas niet", async () =>
 });
 
 test("pas: de diepe analyse (vorm, gereedheid, nacht) en de pas worden alleen met pas getoond; export en verwijderen nemen de pas mee", async () => {
-  const env = { ...makeEnv(), ADMIN_TOKEN: ADMIN };
+  const env = { ...makeEnv(), ADMIN_USERS: "beheer" };
   const cookie = await signup(env);
   const uid = env.DB.db.prepare("SELECT id FROM users").get().id;
   env.DB.db.prepare("INSERT INTO intervals_activities (user_id, activity_id, activity_date, data, updated_at) VALUES (?,?,?,?,?)")
@@ -128,18 +133,28 @@ test("pas: de diepe analyse (vorm, gereedheid, nacht) en de pas worden alleen me
   assert.equal(env.DB.db.prepare("SELECT COUNT(*) AS n FROM passes").get().n, 0);
 });
 
-test("pas: beheerlijst en intrekken werken alleen met het token, en de betaallink komt uit PAS_URL", async () => {
-  const env = { ...makeEnv(), ADMIN_TOKEN: ADMIN, TIKKIE_URL: "https://tikkie.me/pay/steun", PAS_URL: "https://tikkie.me/pay/pas9" };
-  const cookie = await signup(env);
-  const list = token => worker.fetch(new Request(BASE + "/api/admin/pass", { headers: { Authorization: `Bearer ${token}` } }), env);
-  assert.equal((await list("fout")).status, 401);
-  assert.deepEqual((await (await list(ADMIN)).json()).passen, []);
+test("beheer: lijst met accounts, pas aan/intrekken en account verwijderen; PAS_URL als betaallink", async () => {
+  const env = { ...makeEnv(), ADMIN_USERS: "beheer", TIKKIE_URL: "https://tikkie.me/pay/steun", PAS_URL: "https://tikkie.me/pay/pas9" };
+  const cookie = await signup(env, "renner", "10.1.1.1");
+  const admin = await adminCookie(env);
+  const list = async () => (await api(env, "GET", "/api/admin/users", undefined, admin)).data;
+  let data = await list();
+  assert.equal(data.totaal, 2);
+  assert.equal(data.met_pas, 0);
+  assert.deepEqual(data.accounts.map(a => a.gebruiker).sort(), ["beheer", "renner"]);
+  assert.equal(data.accounts.find(a => a.gebruiker === "beheer").beheerder, true);
+  assert.ok(!JSON.stringify(data).includes("hash") && !JSON.stringify(data).includes("salt"), "geen wachtwoordgegevens in de lijst");
   await grant(env, "renner");
-  const active = (await (await list(ADMIN)).json()).passen;
-  assert.equal(active.length, 1);
-  assert.equal(active[0].gebruiker, "renner");
+  data = await list();
+  assert.equal(data.met_pas, 1);
+  assert.ok(data.accounts.find(a => a.gebruiker === "renner").pas_tot);
   assert.equal((await api(env, "GET", "/api/me", undefined, cookie)).data.betaallink, "https://tikkie.me/pay/pas9");
-  assert.equal((await grant(env, "bestaatniet", { intrekken: true })).status, 404);
   assert.equal((await grant(env, "Renner", { intrekken: true })).status, 200);
   assert.equal((await api(env, "GET", "/api/me", undefined, cookie)).data.pas.actief, false);
+  // verwijderen: bevestiging nodig, beheerders zijn beschermd
+  assert.equal((await api(env, "POST", "/api/admin/delete", { username: "renner", bevestig: "fout" }, admin)).status, 400);
+  assert.equal((await api(env, "POST", "/api/admin/delete", { username: "beheer", bevestig: "beheer" }, admin)).status, 400);
+  assert.equal((await api(env, "POST", "/api/admin/delete", { username: "renner", bevestig: "renner" }, admin)).status, 200);
+  assert.equal((await list()).totaal, 1);
+  assert.equal((await api(env, "GET", "/api/me", undefined, cookie)).status, 401, "sessie van verwijderd account werkt niet meer");
 });
