@@ -10,9 +10,9 @@
 const SESSION_DAYS = 30;
 const PBKDF2_ITERATIONS = 100000;      // maximum dat Cloudflare Workers toestaat
 const AI_PER_USER_PER_DAY = 15;        // past bij de gratis Groq-laag (circa 100 aanvragen per dag voor iedereen samen)
-const AI_PRO_PER_USER_PER_DAY = 60;    // 8-wekenpas: ruimere dagelijkse limiet (de gezamenlijke limiet hieronder blijft gelden)
+const AI_PRO_PER_USER_PER_DAY = 60;    // 2-maandpas: ruimere dagelijkse limiet (de gezamenlijke limiet hieronder blijft gelden)
 const FREE_CHAT_PER_DAY = 10;          // gratis: maximaal 10 chatberichten per dag
-const PASS_WEEKS = 8;                  // een pas duurt 8 weken
+const PASS_MONTHS = 2;                 // een pas duurt 2 maanden
 const AI_GLOBAL_PER_DAY = 100;         // gezamenlijke rem; verhoog dit pas na een betaald Groq-account
 const REGISTER_PER_IP_PER_DAY = 10;
 const LOGIN_PER_IP_PER_DAY = 40;
@@ -54,6 +54,11 @@ const SCHEMA = [
      user_id TEXT PRIMARY KEY, profile TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS passes (
      user_id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, granted_at INTEGER NOT NULL, note TEXT)`,
+  `CREATE TABLE IF NOT EXISTS notices (
+     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL, read_at INTEGER)`,
+  `CREATE INDEX IF NOT EXISTS idx_notices_user ON notices(user_id)`,
+  `CREATE TABLE IF NOT EXISTS admin_notes (
+     user_id TEXT PRIMARY KEY, note TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS sessions (
      token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
@@ -465,7 +470,7 @@ function cleanRaces(raw, maxRaces = MAX_RACES) {
     seen.add(item.datum);
     races.push({ datum: item.datum, naam, prioriteit: RACE_LABELS[item.prioriteit] ? item.prioriteit : "B" });
   }
-  if (races.length > maxRaces) return { error: maxRaces < PRO_MAX_RACES ? `Je kunt maximaal ${maxRaces} wedstrijden invullen. Met de 8-wekenpas kun je er ${PRO_MAX_RACES} invullen.` : `Je kunt maximaal ${maxRaces} wedstrijden invullen.`, upgrade: maxRaces < PRO_MAX_RACES };
+  if (races.length > maxRaces) return { error: maxRaces < PRO_MAX_RACES ? `Je kunt maximaal ${maxRaces} wedstrijden invullen. Met de 2-maandpas kun je er ${PRO_MAX_RACES} invullen.` : `Je kunt maximaal ${maxRaces} wedstrijden invullen.`, upgrade: maxRaces < PRO_MAX_RACES };
   return { races: races.sort((a, b) => a.datum.localeCompare(b.datum)) };
 }
 // Datum waar het schema naartoe werkt: het ingevulde doel, anders de hoofdwedstrijd (A), anders de eerste wedstrijd.
@@ -693,24 +698,36 @@ function aiError(r) {
   return json({ error: "upstream", message: "Het maken van het schema is niet gelukt. Probeer het opnieuw." }, 502);
 }
 
-// ---------- 8-wekenpas ----------
+// ---------- 2-maandpas ----------
 // De pas wordt handmatig geactiveerd nadat de betaling (Tikkie) binnen is, zie /api/admin/pass
 async function passExpiry(env, userId) {
   const row = await env.DB.prepare("SELECT expires_at FROM passes WHERE user_id = ?").bind(userId).first();
   return row && row.expires_at > Date.now() ? row.expires_at : null;
 }
 async function isPro(env, userId) { return (await passExpiry(env, userId)) !== null; }
-async function grantPass(env, username, weeks, note) {
+async function grantPass(env, username, months) {
   const user = await env.DB.prepare("SELECT id FROM users WHERE username = ?").bind(username).first();
   if (!user) return null;
   const now = Date.now();
   const current = await passExpiry(env, user.id);
-  const expires = Math.max(now, current || 0) + weeks * 7 * 86400000; // verlengen telt op bij de lopende pas
+  const end = new Date(Math.max(now, current || 0)); // verlengen telt op bij de lopende pas
+  end.setUTCMonth(end.getUTCMonth() + months);
+  const expires = end.getTime();
   await env.DB.prepare(
-    "INSERT INTO passes (user_id, expires_at, granted_at, note) VALUES (?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET expires_at = excluded.expires_at, granted_at = excluded.granted_at, note = excluded.note"
-  ).bind(user.id, expires, now, cleanText(note, 120)).run();
+    "INSERT INTO passes (user_id, expires_at, granted_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET expires_at = excluded.expires_at, granted_at = excluded.granted_at"
+  ).bind(user.id, expires, now).run();
   return expires;
 }
+// ---------- meldingen aan de gebruiker ----------
+const dateNl = ms => new Date(ms).toLocaleDateString("nl-NL", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Amsterdam" });
+async function addNotice(env, userId, text) {
+  await env.DB.prepare("INSERT INTO notices (id, user_id, text, created_at) VALUES (?, ?, ?, ?)").bind(randomHex(12), userId, text, Date.now()).run();
+}
+async function unreadNotices(env, userId) {
+  const rows = (await env.DB.prepare("SELECT id, text FROM notices WHERE user_id = ? AND read_at IS NULL ORDER BY created_at DESC LIMIT 3").bind(userId).all()).results || [];
+  return rows.map(r => ({ id: r.id, tekst: r.text }));
+}
+
 // ---------- beheer ----------
 // Beheerders zijn gewone accounts waarvan de gebruikersnaam in de variabele ADMIN_USERS staat (komma-gescheiden).
 const isAdmin = (env, user) => String(env.ADMIN_USERS || "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean).includes(user.username);
@@ -719,9 +736,9 @@ async function adminRoute(request, env, user, path, method) {
   const noStore = { "Cache-Control": "no-store" };
   if (path === "/api/admin/users" && method === "GET") {
     const rows = (await env.DB.prepare(
-      `SELECT u.username AS username, u.created_at AS created_at, p.expires_at AS pas, pl.start_date AS plan_start, pl.total_weeks AS plan_weken,
+      `SELECT u.username AS username, u.created_at AS created_at, p.expires_at AS pas, pl.start_date AS plan_start, pl.total_weeks AS plan_weken, n.note AS notitie,
          (SELECT COUNT(*) FROM intervals_connections c WHERE c.user_id = u.id) AS koppeling
-       FROM users u LEFT JOIN passes p ON p.user_id = u.id LEFT JOIN plans pl ON pl.user_id = u.id
+       FROM users u LEFT JOIN passes p ON p.user_id = u.id LEFT JOIN plans pl ON pl.user_id = u.id LEFT JOIN admin_notes n ON n.user_id = u.id
        ORDER BY u.created_at DESC LIMIT 1000`).all()).results || [];
     const now = Date.now();
     const accounts = rows.map(r => ({
@@ -729,7 +746,7 @@ async function adminRoute(request, env, user, path, method) {
       pas_tot: r.pas && r.pas > now ? new Date(r.pas).toISOString() : null,
       pas_verlopen: !!(r.pas && r.pas <= now),
       schema: r.plan_start ? { start: r.plan_start, weken: r.plan_weken } : null,
-      koppeling: r.koppeling > 0, beheerder: isAdmin(env, { username: r.username })
+      koppeling: r.koppeling > 0, notitie: r.notitie || "", beheerder: isAdmin(env, { username: r.username })
     }));
     return json({ accounts, totaal: accounts.length, met_pas: accounts.filter(a => a.pas_tot).length }, 200, noStore);
   }
@@ -744,10 +761,19 @@ async function adminRoute(request, env, user, path, method) {
       log("pass_revoked");
       return json({ ok: true, ingetrokken: true });
     }
-    const weeks = Number.isInteger(body.weeks) && body.weeks >= 1 && body.weeks <= 52 ? body.weeks : PASS_WEEKS;
-    const expires = await grantPass(env, username, weeks, body.note);
-    log("pass_granted", { weeks });
+    const months = Number.isInteger(body.maanden) && body.maanden >= 1 && body.maanden <= 12 ? body.maanden : PASS_MONTHS;
+    const extended = (await passExpiry(env, target.id)) !== null;
+    const expires = await grantPass(env, username, months);
+    const message = cleanText(body.bericht, 300);
+    await addNotice(env, target.id, `Je 2-maandpas is ${extended ? "verlengd" : "geactiveerd"} en loopt tot ${dateNl(expires)}.${message ? " Bericht van de beheerder: " + message : ""}`);
+    log("pass_granted", { maanden: months });
     return json({ ok: true, verloopt: new Date(expires).toISOString() });
+  }
+  if (path === "/api/admin/note") {
+    const note = cleanText(body.notitie, 500);
+    if (!note) await env.DB.prepare("DELETE FROM admin_notes WHERE user_id = ?").bind(target.id).run();
+    else await env.DB.prepare("INSERT INTO admin_notes (user_id, note, updated_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at").bind(target.id, note, Date.now()).run();
+    return json({ ok: true, notitie: note });
   }
   if (path === "/api/admin/delete") {
     if (username === user.username || isAdmin(env, { username })) return json({ error: "protected", message: "Een beheerdersaccount verwijder je zelf via Account." }, 400);
@@ -1021,10 +1047,14 @@ async function handleApi(request, env, url) {
   }
   if (!user) return json({ error: "unauthorized" }, 401);
   if (path.startsWith("/api/admin/")) return adminRoute(request, env, user, path, method);
+  if (path === "/api/notices/read" && method === "POST") {
+    await env.DB.prepare("UPDATE notices SET read_at = ? WHERE user_id = ? AND read_at IS NULL").bind(Date.now(), user.id).run();
+    return json({ ok: true });
+  }
 
   if (path === "/api/me" && method === "GET") {
     const expires = await passExpiry(env, user.id);
-    return json({ username: user.username, email: await emailOf(env, user.id), beheerder: isAdmin(env, user),
+    return json({ username: user.username, email: await emailOf(env, user.id), beheerder: isAdmin(env, user), meldingen: await unreadNotices(env, user.id),
       pas: { actief: expires !== null, verloopt: expires ? new Date(expires).toISOString() : null },
       limieten: { weken: expires ? MAX_PLAN_WEEKS : FREE_PLAN_WEEKS, wedstrijden: expires ? PRO_MAX_RACES : MAX_RACES, chat_per_dag: expires ? null : FREE_CHAT_PER_DAY },
       betaallink: supportUrl(env, "PAS_URL") });
@@ -1927,7 +1957,7 @@ async function coachChat(request, env, user) {
     today() >= addDays(planRow.start_date, latest.week_no * 7) ? latest.week_no : null;
   const checkinDue = checkinWeekNo !== null;
   if (!(await isPro(env, user.id)) && !(await hit(env, `chat:u:${user.id}:${today()}`, FREE_CHAT_PER_DAY))) {
-    return json({ error: "chat_limit", upgrade: true, message: `Je hebt vandaag je ${FREE_CHAT_PER_DAY} gratis chatberichten gebruikt. Met de 8-wekenpas chat je ruimer. Morgen kun je weer gratis chatten.` }, 429);
+    return json({ error: "chat_limit", upgrade: true, message: `Je hebt vandaag je ${FREE_CHAT_PER_DAY} gratis chatberichten gebruikt. Met de 2-maandpas chat je ruimer. Morgen kun je weer gratis chatten.` }, 429);
   }
   const gate = await aiAllowed(env, user);
   if (!gate.ok) return gate.res;
@@ -2464,6 +2494,7 @@ async function exportAccount(env, user) {
     coachgesprekken: coachMessages,
     intervals_icu: intervals,
     pas_verloopt: (await passExpiry(env, user.id)) ? new Date(await passExpiry(env, user.id)).toISOString() : null,
+    notitie_beheerder: (await env.DB.prepare("SELECT note FROM admin_notes WHERE user_id = ?").bind(user.id).first())?.note || null,
     schema: data
   }, 200, { "Content-Disposition": 'attachment; filename="wielerschema-gegevens.json"' });
 }
@@ -2483,6 +2514,8 @@ async function deleteUserData(env, userId) {
     env.DB.prepare("DELETE FROM account_profiles WHERE user_id = ?").bind(userId),
     env.DB.prepare("DELETE FROM user_emails WHERE user_id = ?").bind(userId),
     env.DB.prepare("DELETE FROM passes WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM notices WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM admin_notes WHERE user_id = ?").bind(userId),
     env.DB.prepare("DELETE FROM users WHERE id = ?").bind(userId)
   ]);
 }

@@ -52,10 +52,10 @@
         el("span", "admin-status " + st.cls, st.text),
         el("span", "muted small-text", "Aangemaakt " + date(a.aangemaakt) + (a.schema ? ` · schema van ${a.schema.weken} weken` : " · nog geen schema") + (a.koppeling ? " · Intervals.icu gekoppeld" : "")));
       const actions = el("div", "admin-actions");
-      const weeks = el("select"); weeks.setAttribute("aria-label", "Aantal weken pas voor " + a.gebruiker);
-      [[8, "8 weken"], [4, "4 weken"], [16, "16 weken"]].forEach(([v, t]) => { const o = el("option", "", t); o.value = String(v); weeks.appendChild(o); });
+      const weeks = el("select"); weeks.setAttribute("aria-label", "Duur pas voor " + a.gebruiker);
+      [[2, "2 maanden"], [1, "1 maand"], [4, "4 maanden"]].forEach(([v, t]) => { const o = el("option", "", t); o.value = String(v); weeks.appendChild(o); });
       const grant = el("button", "btn small", a.pas_tot ? "Verlengen" : "Pas aanzetten"); grant.type = "button";
-      grant.addEventListener("click", () => act(grant, "/api/admin/pass", { username: a.gebruiker, weeks: Number(weeks.value) }, `Pas voor ${a.gebruiker} bijgewerkt.`));
+      grant.addEventListener("click", () => act(grant, "/api/admin/pass", { username: a.gebruiker, maanden: Number(weeks.value), bericht: row.querySelector(".admin-more input:last-child").value }, `Pas voor ${a.gebruiker} bijgewerkt en melding verstuurd.`));
       actions.append(weeks, grant);
       if (a.pas_tot) {
         const revoke = el("button", "btn ghost small", "Intrekken"); revoke.type = "button";
@@ -70,7 +70,18 @@
         });
         actions.appendChild(del);
       }
-      row.append(info, actions);
+      const more = el("div", "admin-more");
+      const note = el("input"); note.type = "text"; note.maxLength = 500; note.value = a.notitie || ""; note.placeholder = "Notitie (alleen voor jou, bijv. Tikkie 17-11)"; note.setAttribute("aria-label", "Notitie bij " + a.gebruiker);
+      const saved = el("span", "admin-note-saved");
+      const saveNote = async () => {
+        if (note.value.trim() === (a.notitie || "")) return;
+        try { await call("POST", "/api/admin/note", { username: a.gebruiker, notitie: note.value }); a.notitie = note.value.trim(); saved.textContent = "Notitie opgeslagen."; }
+        catch (e) { saved.textContent = e.message; }
+      };
+      note.addEventListener("change", saveNote);
+      const message = el("input"); message.type = "text"; message.maxLength = 300; message.placeholder = "Bericht aan gebruiker bij activeren (optioneel)"; message.setAttribute("aria-label", "Bericht aan " + a.gebruiker);
+      more.append(note, message);
+      row.append(info, actions, more, saved);
       list.appendChild(row);
     });
   }

@@ -570,3 +570,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { border-color
 .btn.danger { color: #a83d35; border-color: #e3c3bf; }
 .btn.danger:hover { border-color: #a83d35; color: #a83d35; }
 @media (max-width: 600px) { .admin-actions { width: 100%; } .admin-stats { grid-template-columns: repeat(3, 1fr); gap: 8px; } .admin-stats .card { padding: 12px; } .admin-stats strong { font-size: 1.5rem; } .admin-stats span { font-size: .8rem; } }
+
+/* ===== Melding van de beheerder ===== */
+.notice-banner { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; padding: 14px 18px; border: 1px solid var(--accent-line); border-radius: 16px; background: var(--accent-soft); color: var(--accent-dark); font-weight: 600; }
+.notice-banner p { margin: 0; }
+.notice-banner p + p { margin-top: 6px; }
+.admin-more { flex-basis: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.admin-more input { min-height: 38px; padding: 6px 10px; font-size: .92rem; }
+.admin-note-saved { color: var(--accent-dark); font-size: .8rem; min-height: 1em; }

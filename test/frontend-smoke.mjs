@@ -319,7 +319,7 @@ ok(text().includes("FIT-bestand importeren") && text().includes("Nog geen activi
 ok(!text().includes("Strava") && !text().includes("strava"), "Strava is uit de activiteitenpagina verwijderd");
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Analyse")[0].click();
 await tick(); await tick(); await tick();
-ok(text().includes("Training en herstel") && text().includes("Prestatiebeheer") && text().includes("Diepe analyse met de 8-wekenpas") && !text().includes("Gereedheid om te trainen") && !text().includes("Je nacht") && !text().includes("null"), "gratis analysepagina toont basis en een uitnodiging voor de pas, zonder diepe analyse");
+ok(text().includes("Training en herstel") && text().includes("Prestatiebeheer") && text().includes("Diepe analyse met de 2-maandpas") && !text().includes("Gereedheid om te trainen") && !text().includes("Je nacht") && !text().includes("null"), "gratis analysepagina toont basis en een uitnodiging voor de pas, zonder diepe analyse");
 find(root.nav, e => e.tagName === "BUTTON" && e.textContent === "Koppelingen")[0].click();
 ok(text().includes("Koppelingen") && text().includes("GARMIN CONNECT") && text().includes("WAHOO") &&
   !find(root.nav, e => e.tagName === "BUTTON" && /Garmin koppelen|Wahoo koppelen/.test(e.textContent)).length,

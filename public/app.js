@@ -54,7 +54,19 @@ function h(tag, props, ...children) {
 }
 
 function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); }
-function show(...nodes) { clear(app); nodes.flat().forEach(n => n && app.appendChild(n)); window.scrollTo(0, 0); }
+function show(...nodes) { clear(app); noticeBanner(); nodes.flat().forEach(n => n && app.appendChild(n)); window.scrollTo(0, 0); }
+// Eenmalige melding van de beheerder, bijvoorbeeld dat je 2-maandpas is geactiveerd
+function noticeBanner() {
+  const list = state.meldingen || [];
+  if (!list.length) return;
+  const box = h("section", { class: "notice-banner", role: "status" },
+    h("div", {}, ...list.map(item => h("p", { text: item.tekst }))),
+    h("button", { class: "btn small", type: "button", text: "Sluiten", onclick: async () => {
+      state.meldingen = []; box.remove();
+      try { await api("POST", "/api/notices/read", {}); } catch { /* melding blijft anders staan */ }
+    } }));
+  app.appendChild(box);
+}
 function coachRichText(text) {
   const fragment = h("span", {});
   const parts = String(text || "").split(/(\*\*[^*]+\*\*)/g);
@@ -591,7 +603,7 @@ function viewIntake(prefill) {
   addRace.addEventListener("click", () => { races.push({ datum: "", naam: "", prioriteit: "B" }); renderRaces(); });
   const racesBlock = h("div", { class: "stack" },
     h("p", { class: "label-text", text: "Wedstrijden (optioneel)" }),
-    h("p", { class: "hint", text: "Heb je wedstrijden of evenementen in de komende 20 weken? De coach plant rustiger ervoor en laat je erna herstellen." + (state.pas?.actief ? "" : " Gratis kun je er 4 invullen, met de 8-wekenpas 15.") }),
+    h("p", { class: "hint", text: "Heb je wedstrijden of evenementen in de komende 20 weken? De coach plant rustiger ervoor en laat je erna herstellen." + (state.pas?.actief ? "" : " Gratis kun je er 4 invullen, met de 2-maandpas 15.") }),
     raceList, addRace);
   renderRaces();
   const stepNames = ["Doel", "Tijd", "Training"];
@@ -610,7 +622,7 @@ function viewIntake(prefill) {
       h("p", { class: "muted", text: "Vertel waar je naartoe wilt werken en op welk niveau je fietst." }),
       field("Wat wil je bereiken?", doel),
       field("Geboortedatum (DD-MM-JJJJ)", birthDate, "Je leeftijd helpt de coach het schema af te stemmen. Alleen je leeftijd, niet je geboortedatum, wordt met de AI gedeeld."),
-      field("Heb je een datum voor je doel?", datum, "Optioneel, tot 20 weken vooruit. Zonder datum maakt de coach een schema van 8 weken. Een schema duurt maximaal " + (state.pas?.actief ? "16" : "8 weken (met de 8-wekenpas 16)") + "; ligt je doel verder weg, dan bouwt de coach eerst op en maak je daarna een nieuw schema."),
+      field("Heb je een datum voor je doel?", datum, "Optioneel, tot 20 weken vooruit. Zonder datum maakt de coach een schema van 8 weken. Een schema duurt maximaal " + (state.pas?.actief ? "16" : "8 weken (met de 2-maandpas 16)") + "; ligt je doel verder weg, dan bouwt de coach eerst op en maak je daarna een nieuw schema."),
       racesBlock,
       field("Hoe zou je je niveau omschrijven?", niveau)),
     h("section", { class: "wizard-panel stack", hidden: true },
@@ -2234,8 +2246,8 @@ function renderAnalytics(body, a) {
   body.append(
     h("div", { class: "stats-grid analytics-top" },
       analyticsStat("Fitness · CTL", hasLoad ? nl(k.ctl) : "–", "belasting 42 dagen"),
-      analyticsStat("Vermoeidheid · ATL", hasLoad && k.atl != null ? nl(k.atl) : "–", a.pro ? "belasting 7 dagen" : "met 8-wekenpas"),
-      analyticsStat("Vorm · TSB", hasLoad && k.tsb != null ? signed(k.tsb, 0) : "–", a.pro ? (k.vorm_label || "") : "met 8-wekenpas"),
+      analyticsStat("Vermoeidheid · ATL", hasLoad && k.atl != null ? nl(k.atl) : "–", a.pro ? "belasting 7 dagen" : "met 2-maandpas"),
+      analyticsStat("Vorm · TSB", hasLoad && k.tsb != null ? signed(k.tsb, 0) : "–", a.pro ? (k.vorm_label || "") : "met 2-maandpas"),
       analyticsStat("Volume · 7d", `${nl(k.volume.uren, 1)} u`, `${k.volume.sessies} ${k.volume.sessies === 1 ? "rit" : "ritten"}`),
       analyticsStat("Gewicht", k.gewicht ? `${nl(k.gewicht.kg, 1)} kg` : "–", k.gewicht ? "laatste meting" : "geen data")),
     a.pro ? h("div", { class: "analytics-panels" }, readinessCard, riskCard, balanceCard) : lockedAnalysisCard(),
@@ -2250,18 +2262,18 @@ function renderAnalytics(body, a) {
     h("p", { class: "muted small-text", text: `Gebaseerd op ${a.bronnen.activiteiten} activiteiten en ${a.bronnen.nachten} nachten. Belasting komt uit Intervals.icu en anders uit een schatting met je FTP of maximale hartslag (${a.bronnen.vermogen} op vermogen, ${a.bronnen.hartslag} op hartslag, ${a.bronnen.schatting} grof geschat). Gereedheid en risico zijn indicatief en geen medisch advies.` }));
 }
 
-// ---------- 8-wekenpas ----------
+// ---------- 2-maandpas ----------
 function passCard() {
   const pas = state.pas || { actief: false };
   if (pas.actief) {
     return h("section", { class: "card stack pass-card" },
-      h("h2", { text: "8-wekenpas" }),
+      h("h2", { text: "2-maandpas" }),
       h("p", {}, "Je pas is actief tot ", h("strong", { text: new Date(pas.verloopt).toLocaleDateString("nl-NL", { day: "numeric", month: "long", year: "numeric" }) }), ". Je kunt schema’s van 16 weken maken, 15 wedstrijden invullen, ruim met de coach chatten en gebruikt de AI-ritanalyse en de diepe analyse."),
-      h("p", { class: "muted", text: "Verlengen kan altijd: de nieuwe 8 weken tellen op bij je lopende pas." }),
-      payBlock("Pas verlengen"));
+      h("p", { class: "muted", text: "Verlengen kan altijd: de nieuwe 2 maanden tellen op bij je lopende pas." }),
+      payBlock("Verlengen met € 5 via Tikkie"));
   }
   return h("section", { class: "card stack pass-card" },
-    h("h2", { text: "8-wekenpas: € 9 voor 8 weken" }),
+    h("h2", { text: "2-maandpas: € 5 voor 2 maanden" }),
     h("ul", {},
       h("li", { text: "Schema’s tot 16 weken in plaats van 8" }),
       h("li", { text: "Tot 15 wedstrijden (A/B/C) in plaats van 4" }),
@@ -2269,22 +2281,23 @@ function passCard() {
       h("li", { text: "Persoonlijke AI-analyse van je ritten" }),
       h("li", { text: "Diepe analyse: vermoeidheid, vorm, slaap en HRV" })),
     h("p", { class: "muted", text: "Rekentools en alle veiligheidsmaatregelen blijven voor iedereen gratis." }),
-    payBlock("Koop de 8-wekenpas"));
+    payBlock("Betaal € 5 via Tikkie"));
 }
 function payBlock(label) {
   const link = state.betaallink;
   return h("div", { class: "stack" },
+    link ? h("a", { class: "btn", href: link, target: "_blank", rel: "noopener", text: label }) : h("p", { class: "muted", text: "De betaallink wordt binnenkort toegevoegd." }),
     h("ol", {},
-      h("li", {}, link ? h("a", { href: link, target: "_blank", rel: "noopener", text: "Betaal € 9 via Tikkie" }) : "Betaal € 9 via Tikkie (de link verschijnt hier zodra die is ingesteld)"),
+      h("li", { text: "Betaal € 5 via Tikkie." }),
       h("li", {}, "Zet je gebruikersnaam ", h("strong", { text: state.user || "" }), " in de omschrijving."),
-      h("li", { text: "Zodra de betaling binnen is, zet ik je pas aan. Laad daarna de pagina opnieuw." })),
+      h("li", { text: "Zodra de betaling binnen is, zet ik je pas aan. Je krijgt dan een melding in de app." })),
     h("p", { class: "muted small-text" }, "Vragen? Mail ", h("a", { href: "mailto:hessel@wielerschema.me", text: "hessel@wielerschema.me" }), "."));
 }
 function lockedAnalysisCard() {
   return h("section", { class: "card stack" },
-    h("h2", { text: "Diepe analyse met de 8-wekenpas" }),
+    h("h2", { text: "Diepe analyse met de 2-maandpas" }),
     h("p", { class: "muted", text: "Met de pas zie je je vermoeidheid, vorm, gereedheid om te trainen, belastingsverhouding en je nachten (slaap, HRV en rusthartslag)." }),
-    h("button", { class: "btn", type: "button", text: "Bekijk de 8-wekenpas", onclick: () => viewAccount() }));
+    h("button", { class: "btn", type: "button", text: "Bekijk de 2-maandpas", onclick: () => viewAccount() }));
 }
 
 // ---------- account ----------
@@ -2444,6 +2457,7 @@ async function start() {
     state.user = me.username;
     state.email = me.email || "";
     state.pas = me.pas || { actief: false };
+    state.meldingen = me.meldingen || [];
     state.limieten = me.limieten || null;
     state.betaallink = me.betaallink || "";
     state.data = await api("GET", "/api/plan");

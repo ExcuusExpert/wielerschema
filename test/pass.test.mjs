@@ -53,17 +53,23 @@ test("beheer: alleen ingelogde beheerders komen erin, anderen niet", async () =>
   assert.equal((await grant(env, "bestaatniet")).status, 404);
 });
 
-test("pas: activeren duurt 8 weken, verlengen telt op en /api/me toont de status en limieten", async () => {
+test("pas: activeren duurt 2 maanden, verlengen telt op, maanden kunnen gekozen worden en /api/me toont de status en limieten", async () => {
   const env = { ...makeEnv(), ADMIN_USERS: "beheer" };
   const cookie = await signup(env);
   let me = await api(env, "GET", "/api/me", undefined, cookie);
   assert.equal(me.data.pas.actief, false);
   assert.deepEqual(me.data.limieten, { weken: 8, wedstrijden: 4, chat_per_dag: 10 });
+  const plusMonths = (ms, n) => { const d = new Date(ms); d.setUTCMonth(d.getUTCMonth() + n); return d.getTime(); };
+  const before = Date.now();
   const first = await (await grant(env, "renner")).json();
-  const days = (new Date(first.verloopt) - Date.now()) / 86400000;
-  assert.ok(days > 55.9 && days <= 56.01, String(days));
+  const t1 = new Date(first.verloopt).getTime();
+  assert.ok(t1 >= plusMonths(before, 2) && t1 <= plusMonths(Date.now(), 2), "2 maanden vanaf nu");
   const second = await (await grant(env, "renner")).json();
-  assert.ok(new Date(second.verloopt) - new Date(first.verloopt) > 55.9 * 86400000, "verlengen telt op");
+  assert.equal(new Date(second.verloopt).getTime(), plusMonths(t1, 2), "verlengen telt op bij de lopende pas");
+  const third = await (await grant(env, "renner", { maanden: 1 })).json();
+  assert.equal(new Date(third.verloopt).getTime(), plusMonths(new Date(second.verloopt).getTime(), 1));
+  const odd = await (await grant(env, "renner", { maanden: 99 })).json();
+  assert.equal(new Date(odd.verloopt).getTime(), plusMonths(new Date(third.verloopt).getTime(), 2), "ongeldige duur wordt 2 maanden");
   me = await api(env, "GET", "/api/me", undefined, cookie);
   assert.equal(me.data.pas.actief, true);
   assert.deepEqual(me.data.limieten, { weken: 16, wedstrijden: 15, chat_per_dag: null });
@@ -83,7 +89,7 @@ test("pas: gratis maximaal 4 wedstrijden en 8 weken, met pas 15 wedstrijden en 1
   const tooMany = await api(env, "POST", "/api/plan/create", { intake: base({ wedstrijden: races(5) }) }, cookie);
   assert.equal(tooMany.status, 400);
   assert.match(tooMany.data.message, /maximaal 4 wedstrijden/);
-  assert.match(tooMany.data.message, /8-wekenpas/);
+  assert.match(tooMany.data.message, /2-maandpas/);
   prompts = [];
   const free = await api(env, "POST", "/api/plan/create", { intake: base({ datum: future(130) }) }, cookie);
   assert.equal(free.status, 200, JSON.stringify(free.data));
@@ -157,4 +163,45 @@ test("beheer: lijst met accounts, pas aan/intrekken en account verwijderen; PAS_
   assert.equal((await api(env, "POST", "/api/admin/delete", { username: "renner", bevestig: "renner" }, admin)).status, 200);
   assert.equal((await list()).totaal, 1);
   assert.equal((await api(env, "GET", "/api/me", undefined, cookie)).status, 401, "sessie van verwijderd account werkt niet meer");
+});
+
+test("melding: bij activeren en verlengen krijgt de gebruiker één melding, met optioneel bericht, die je kunt wegklikken", async () => {
+  const env = { ...makeEnv(), ADMIN_USERS: "beheer" };
+  const cookie = await signup(env, "renner", "10.1.1.1");
+  const me = async () => (await api(env, "GET", "/api/me", undefined, cookie)).data;
+  assert.deepEqual((await me()).meldingen, []);
+  await grant(env, "renner", { bericht: "Bedankt voor je betaling!" });
+  let m = (await me()).meldingen;
+  assert.equal(m.length, 1);
+  assert.match(m[0].tekst, /2-maandpas is geactiveerd en loopt tot \d+ \w+ \d{4}/);
+  assert.match(m[0].tekst, /Bedankt voor je betaling!/);
+  assert.equal((await api(env, "POST", "/api/notices/read", {}, cookie)).status, 200);
+  assert.deepEqual((await me()).meldingen, []);
+  await grant(env, "renner", { bericht: "<b>x</b>" });
+  m = (await me()).meldingen;
+  assert.match(m[0].tekst, /verlengd/);
+  assert.ok(!m[0].tekst.includes("<"), "geen HTML in meldingen");
+  const other = await signup(env, "andere", "10.2.2.2");
+  assert.deepEqual((await api(env, "GET", "/api/me", undefined, other)).data.meldingen, [], "meldingen zijn per gebruiker");
+});
+
+test("notities: beheerder bewaart een notitie per account, die staat in de lijst en in de export, en verdwijnt bij verwijderen", async () => {
+  const env = { ...makeEnv(), ADMIN_USERS: "beheer" };
+  const cookie = await signup(env, "renner", "10.1.1.1");
+  const admin = await adminCookie(env);
+  const note = (user, notitie) => api(env, "POST", "/api/admin/note", { username: user, notitie }, admin);
+  assert.equal((await api(env, "POST", "/api/admin/note", { username: "renner", notitie: "x" }, cookie)).status, 403);
+  assert.equal((await note("renner", "Tikkie 17-11, vriend van Jeroen")).status, 200);
+  let list = (await api(env, "GET", "/api/admin/users", undefined, admin)).data.accounts;
+  assert.equal(list.find(a => a.gebruiker === "renner").notitie, "Tikkie 17-11, vriend van Jeroen");
+  assert.equal(list.find(a => a.gebruiker === "beheer").notitie, "");
+  assert.equal((await api(env, "GET", "/api/account/export", undefined, cookie)).data.notitie_beheerder, "Tikkie 17-11, vriend van Jeroen");
+  assert.equal((await note("renner", "  ")).status, 200, "leeg wist de notitie");
+  list = (await api(env, "GET", "/api/admin/users", undefined, admin)).data.accounts;
+  assert.equal(list.find(a => a.gebruiker === "renner").notitie, "");
+  await note("renner", "weg ermee");
+  await grant(env, "renner");
+  await api(env, "POST", "/api/admin/delete", { username: "renner", bevestig: "renner" }, admin);
+  assert.equal(env.DB.db.prepare("SELECT COUNT(*) AS n FROM admin_notes").get().n, 0);
+  assert.equal(env.DB.db.prepare("SELECT COUNT(*) AS n FROM notices").get().n, 0);
 });

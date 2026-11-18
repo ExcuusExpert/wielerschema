@@ -2,7 +2,7 @@
 
 Een openbare webapp waarin wielrenners een trainingsschema laten maken door een AI-coach (Groq). De coach stelt eerst vragen, maakt een schema voor de beschikbare dagen en stuurt elke week bij op basis van de terugmelding.
 
-Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert zowel de website (`public/`) als de API, met D1 als database.
+Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert zowel de website (`public/`) als de API, met D1 als database. Dit project is gemaakt door Hessel.
 
 ## Wat kan het nu
 
@@ -32,17 +32,19 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 
 Nog niet: wachtwoord vergeten via e-mail (het e-mailadres wordt wel al, optioneel, bewaard), automatische koppelingen met Garmin, Strava of Wahoo. Intervals.icu vereist OAuth-secrets en een goedgekeurde app.
 
-## 8-wekenpas (betaalde functies)
+## 2-maandpas (betaalde functies)
 
-Gratis: schema tot 8 weken, 4 wedstrijden, 10 chatberichten per dag, basisanalyse. Met pas (€ 9 voor 8 weken): schema tot 16 weken, 15 wedstrijden, 60 AI-aanvragen per dag, AI-ritanalyse en diepe analyse (vermoeidheid, vorm, gereedheid, slaap en HRV). Rekentools en veiligheidsregels blijven voor iedereen gelijk. De limieten staan bovenin `src/worker.js` (`FREE_CHAT_PER_DAY`, `AI_PRO_PER_USER_PER_DAY`, `PRO_MAX_RACES`, `FREE_PLAN_WEEKS`). De gezamenlijke limiet van 100 AI-aanvragen per dag geldt ook voor pashouders.
+Gratis: schema tot 8 weken, 4 wedstrijden, 10 chatberichten per dag, basisanalyse. Met pas (€ 5 voor 2 maanden): schema tot 16 weken, 15 wedstrijden, 60 AI-aanvragen per dag, AI-ritanalyse en diepe analyse (vermoeidheid, vorm, gereedheid, slaap en HRV). Rekentools en veiligheidsregels blijven voor iedereen gelijk. De limieten staan bovenin `src/worker.js` (`FREE_CHAT_PER_DAY`, `AI_PRO_PER_USER_PER_DAY`, `PRO_MAX_RACES`, `FREE_PLAN_WEEKS`). De gezamenlijke limiet van 100 AI-aanvragen per dag geldt ook voor pashouders.
 
-Betalen gaat via een aparte Tikkie-link van € 9 (variabele `PAS_URL`; `TIKKIE_URL` blijft de steunknop). Zodra een betaling binnen is, zet je de pas aan op de beheerpagina.
+Betalen gaat via een aparte Tikkie-link van € 5 (variabele `PAS_URL`; `TIKKIE_URL` blijft de steunknop). Zodra een betaling binnen is, zet je de pas aan op de beheerpagina.
 
 ### Beheerpagina
 
 Open `https://wielerschema.me/beheer.html` en log in met je gewone WielerSchema-account. Dat account moet in de variabele `ADMIN_USERS` staan (Cloudflare, Settings, Variables; meerdere namen met een komma ertussen, bijvoorbeeld `hessel`). Wie niet in die lijst staat, krijgt een melding dat het account geen beheerder is, en zonder `ADMIN_USERS` is niemand beheerder.
 
-Op de pagina zie je alle accounts met aanmaakdatum, schema en passtatus. Je kunt zoeken, filteren op accounts met een pas, een pas aanzetten of verlengen (4, 8 of 16 weken; verlengen telt op bij de lopende pas), een pas intrekken en een account met alle gegevens verwijderen (je typt de gebruikersnaam ter bevestiging). Beheerdersaccounts zijn beschermd tegen verwijderen. Wachtwoorden en e-mailadressen zie je niet.
+Op de pagina zie je alle accounts met aanmaakdatum, schema en passtatus. Je kunt zoeken, filteren op accounts met een pas, een pas aanzetten of verlengen (1, 2 of 4 maanden; verlengen telt op bij de lopende pas), een pas intrekken en een account met alle gegevens verwijderen (je typt de gebruikersnaam ter bevestiging). Beheerdersaccounts zijn beschermd tegen verwijderen. Wachtwoorden en e-mailadressen zie je niet.
+
+Bij elk account kun je een notitie bewaren die alleen jij ziet (bijvoorbeeld "Tikkie 18-11"); die slaat automatisch op. Bij het aanzetten of verlengen van een pas kun je ook een kort bericht voor de gebruiker invullen. De gebruiker ziet bij de eerstvolgende keer openen een melding dat de pas actief is, met de einddatum en jouw bericht, en kan die wegklikken.
 
 ## Nieuwsbrief bij aanmelden
 
