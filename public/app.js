@@ -470,7 +470,8 @@ function viewAuth(mode = "login") {
   field("Gebruikersnaam", username, mode === "register" ? "Kies een naam om mee in te loggen." : null),
   mode === "register" ? field("E-mailadres (optioneel)", email, "Om later je wachtwoord te kunnen herstellen. Ben je jonger dan 16? Gebruik het adres van een ouder of verzorger.") : null,
   mode === "register" ? h("label", { class: "check" }, news, h("span", { text: "Ja, stuur me af en toe de WielerSchema-nieuwsbrief (vul hierboven een e-mailadres in). Je kunt je altijd afmelden." })) : null,
-  field("Wachtwoord", password, mode === "register" ? "Minstens 10 tekens. Herstel van je wachtwoord via e-mail komt later; vul daarom een e-mailadres in." : null),
+  field("Wachtwoord", password, mode === "register" ? "Minstens 10 tekens. Vul een e-mailadres in, dan kun je je wachtwoord later herstellen." : null),
+  mode === "login" ? h("button", { class: "link", type: "button", text: "Wachtwoord vergeten?", onclick: viewForgot }) : null,
   mode === "register"
     ? h("div", { class: "stack" },
     h("label", { class: "check" }, consent, h("span", {}, "Ik heb de ", h("a", { href: "privacy.html", target: "_blank", rel: "noopener" }, "privacyverklaring"), " gelezen en ga akkoord met verwerking van mijn gegevens voor deze dienst, waaronder verwerking van trainingsgegevens door de AI-coach.")))
@@ -483,6 +484,49 @@ function viewAuth(mode = "login") {
   );
 
   show(h("button", { class: "link home-back", type: "button", text: "← Terug naar startpagina", onclick: viewHome }), form);
+}
+
+// ---------- wachtwoord vergeten ----------
+function viewForgot() {
+  renderNav();
+  const error = h("p", { class: "error", role: "alert" });
+  const email = h("input", { type: "email", name: "email", autocomplete: "email", required: true, maxlength: 254, placeholder: "naam@voorbeeld.nl" });
+  const submit = h("button", { class: "btn", type: "submit", text: "Stuur me een link" });
+  const form = h("form", { class: "card stack", onsubmit: async event => {
+    event.preventDefault(); error.textContent = "";
+    const done = busyButton(submit);
+    try {
+      const res = await api("POST", "/api/password/forgot", { email: email.value.trim() });
+      show(h("section", { class: "card stack" }, h("h2", { text: "Check je mail" }), h("p", { text: res.message }),
+        h("button", { class: "btn ghost", type: "button", text: "Terug naar inloggen", onclick: () => viewAuth("login") })));
+    } catch (e) { error.textContent = e.message; done(); }
+  } },
+    h("h2", { text: "Wachtwoord vergeten" }),
+    h("p", { class: "muted", text: "Vul het e-mailadres in dat je bij je account hebt opgegeven. Je krijgt een link om een nieuw wachtwoord te kiezen." }),
+    field("E-mailadres", email),
+    error, submit,
+    h("p", { class: "muted" }, "Geen e-mailadres ingevuld? Mail ", h("a", { href: "mailto:hessel@wielerschema.me", text: "hessel@wielerschema.me" }), "."));
+  show(h("button", { class: "link home-back", type: "button", text: "← Terug naar inloggen", onclick: () => viewAuth("login") }), form);
+}
+function viewReset(token) {
+  renderNav();
+  const error = h("p", { class: "error", role: "alert" });
+  const password = h("input", { type: "password", name: "password", autocomplete: "new-password", required: true, minlength: 10, maxlength: 200 });
+  const submit = h("button", { class: "btn", type: "submit", text: "Wachtwoord opslaan" });
+  const form = h("form", { class: "card stack", onsubmit: async event => {
+    event.preventDefault(); error.textContent = "";
+    const done = busyButton(submit);
+    try {
+      await api("POST", "/api/password/reset", { token, password: password.value });
+      history.replaceState(null, "", location.pathname);
+      show(h("section", { class: "card stack" }, h("h2", { text: "Gelukt" }), h("p", { text: "Je wachtwoord is veranderd. Je bent overal uitgelogd; log nu in met je nieuwe wachtwoord." }),
+        h("button", { class: "btn", type: "button", text: "Inloggen", onclick: () => viewAuth("login") })));
+    } catch (e) { error.textContent = e.message; done(); }
+  } },
+    h("h2", { text: "Nieuw wachtwoord kiezen" }),
+    field("Nieuw wachtwoord", password, "Minstens 10 tekens."),
+    error, submit);
+  show(form);
 }
 
 // Zelfde inhoud als in index.html, zodat die ook na het laden van de pagina zichtbaar blijft (goed voor zoekmachines)
@@ -2452,6 +2496,8 @@ function viewAccount() {
 // ---------- start ----------
 async function start() {
   loadSupport();
+  const reset = (typeof location === "undefined" ? "" : location.hash).match(/^#herstel=([a-f0-9]{64})$/);
+  if (reset) { state.user = null; viewReset(reset[1]); return; }
   try {
     const me = await api("GET", "/api/me");
     state.user = me.username;
@@ -2477,7 +2523,8 @@ async function start() {
       viewPlan();
     } else viewIntake();
   } catch (e) {
-    if (e.status === 401) { state.user = null; state.data = null; viewHome(); }
+    // Zonder verbinding met de server (of zonder toegang tot /api/, zoals bij een zoekmachine) tonen we gewoon de startpagina
+    if (!e.status || e.status === 401) { state.user = null; state.data = null; viewHome(); }
     else show(h("p", { class: "error", text: e.message }));
   }
 }

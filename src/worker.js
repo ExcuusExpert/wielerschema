@@ -59,6 +59,9 @@ const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS idx_notices_user ON notices(user_id)`,
   `CREATE TABLE IF NOT EXISTS admin_notes (
      user_id TEXT PRIMARY KEY, note TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS password_resets (
+     token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS idx_resets_user ON password_resets(user_id)`,
   `CREATE TABLE IF NOT EXISTS sessions (
      token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
@@ -136,7 +139,7 @@ async function saveEmail(env, userId, email) {
 function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", ...extraHeaders }
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-Robots-Tag": "noindex", ...extraHeaders }
   });
 }
 function log(evt, extra = {}) { console.log(JSON.stringify({ evt, ...extra })); }
@@ -280,7 +283,8 @@ async function hit(env, key, limit) {
 async function cleanup(env) {
   await env.DB.batch([
     env.DB.prepare("DELETE FROM counters WHERE day < ?").bind(addDays(today(), -2)),
-    env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(Date.now())
+    env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(Date.now()),
+    env.DB.prepare("DELETE FROM password_resets WHERE expires_at < ?").bind(Date.now())
   ]);
 }
 
@@ -1037,6 +1041,8 @@ async function handleApi(request, env, url) {
   if (path === "/api/support" && method === "GET") return json({ url: supportUrl(env) }, 200, { "Cache-Control": "public, max-age=300" });
   if (path === "/api/register" && method === "POST") return register(request, env);
   if (path === "/api/login" && method === "POST") return login(request, env);
+  if (path === "/api/password/forgot" && method === "POST") return forgotPassword(request, env);
+  if (path === "/api/password/reset" && method === "POST") return resetPassword(request, env);
   if (path === "/api/intervals/callback" && method === "GET") return intervalsCallback(request, env);
 
   const user = await currentUser(env, request);
@@ -1129,6 +1135,81 @@ async function subscribeNewsletter(env, email) {
     log(ok ? "newsletter_ok" : "newsletter_fail", { code: data.code ?? res.status });
     return ok;
   } catch { log("newsletter_error"); return false; }
+}
+
+// ---------- e-mail via Zoho Mail en wachtwoord herstellen ----------
+// Gebruikt dezelfde Zoho-gegevens als de nieuwsbrief. De refresh token heeft ook de scopes
+// ZohoMail.messages.CREATE en ZohoMail.accounts.READ nodig. Afzender: MAIL_FROM (standaard hessel@wielerschema.me).
+let zohoMailAccount = null;
+const mailConfigured = env => Boolean(env.ZOHO_CLIENT_ID && env.ZOHO_CLIENT_SECRET && env.ZOHO_REFRESH_TOKEN);
+async function zohoMailAccountId(env, token) {
+  if (env.ZOHO_MAIL_ACCOUNT_ID) return String(env.ZOHO_MAIL_ACCOUNT_ID);
+  if (zohoMailAccount) return zohoMailAccount;
+  const res = await fetch(`https://mail.zoho.${zohoDc(env)}/api/accounts`, { headers: { Authorization: `Zoho-oauthtoken ${token}` }, signal: AbortSignal.timeout(5000) });
+  const data = await res.json().catch(() => ({}));
+  const id = data && data.data && data.data[0] && data.data[0].accountId;
+  if (!id) throw new Error("zoho_mail_account");
+  zohoMailAccount = String(id);
+  return zohoMailAccount;
+}
+async function sendMail(env, to, subject, text) {
+  if (!mailConfigured(env)) return false;
+  try {
+    const token = await zohoAccessToken(env);
+    const accountId = await zohoMailAccountId(env, token);
+    const res = await fetch(`https://mail.zoho.${zohoDc(env)}/api/accounts/${accountId}/messages`, {
+      method: "POST", signal: AbortSignal.timeout(8000),
+      headers: { Authorization: `Zoho-oauthtoken ${token}`, "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ fromAddress: env.MAIL_FROM || "hessel@wielerschema.me", toAddress: to, subject, content: text, mailFormat: "plaintext" })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) zohoToken = { value: null, until: 0 };
+    const ok = res.ok && (!data.status || data.status.code === 200);
+    log(ok ? "mail_ok" : "mail_fail", { code: res.status });
+    return ok;
+  } catch { log("mail_error"); return false; }
+}
+const RESET_TTL_MS = 60 * 60 * 1000;
+async function forgotPassword(request, env) {
+  const body = await readJson(request);
+  const emailResult = cleanEmail(body.email);
+  if (emailResult.error || !emailResult.email) return json({ error: "email", message: "Vul het e-mailadres in dat bij je account staat." }, 400);
+  const email = emailResult.email;
+  const ip = await ipHash(env, request), day = today();
+  if (!(await hit(env, `pw:ip:${ip}:${day}`, 8)) || !(await hit(env, `pw:e:${await sha256Hex(email)}:${day}`, 3))) {
+    return json({ error: "rate", message: "Er zijn vandaag al meerdere herstelmails aangevraagd. Probeer het morgen opnieuw." }, 429);
+  }
+  if (!mailConfigured(env)) { log("reset_unavailable"); return json({ error: "mail", message: "Wachtwoord herstellen per e-mail is nog niet beschikbaar. Mail hessel@wielerschema.me, dan helpen we je." }, 503); }
+  const rows = (await env.DB.prepare("SELECT u.id AS id, u.username AS username FROM user_emails e JOIN users u ON u.id = e.user_id WHERE e.email = ? LIMIT 3").bind(email).all()).results || [];
+  const base = typeof env.SITE_URL === "string" && /^https:\/\//.test(env.SITE_URL) ? env.SITE_URL.replace(/\/$/, "") : "https://wielerschema.me";
+  for (const row of rows) {
+    const token = randomHex(32);
+    await env.DB.prepare("DELETE FROM password_resets WHERE user_id = ?").bind(row.id).run();
+    await env.DB.prepare("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES (?, ?, ?)").bind(await sha256Hex(token), row.id, Date.now() + RESET_TTL_MS).run();
+    await sendMail(env, email, "Nieuw wachtwoord voor WielerSchema",
+      `Hoi ${row.username},\n\nJe hebt een nieuw wachtwoord aangevraagd voor je WielerSchema-account "${row.username}".\n\nKies hier een nieuw wachtwoord. De link werkt één uur en maar één keer:\n${base}/#herstel=${token}\n\nHeb je dit niet zelf aangevraagd? Dan hoef je niets te doen. Je wachtwoord blijft dan hetzelfde.\n\nWielerSchema`);
+  }
+  log("reset_requested", { accounts: rows.length });
+  // Altijd hetzelfde antwoord, zodat niemand kan nagaan welke adressen een account hebben
+  return json({ ok: true, message: "Hoort dit adres bij een account, dan hebben we een mail gestuurd. Kijk ook in je spam. De link werkt een uur." });
+}
+async function resetPassword(request, env) {
+  const body = await readJson(request);
+  const token = typeof body.token === "string" ? body.token : "";
+  const password = typeof body.password === "string" ? body.password : "";
+  if (!/^[a-f0-9]{64}$/.test(token)) return json({ error: "token", message: "Deze link klopt niet. Vraag een nieuwe aan." }, 400);
+  if (password.length < 10 || password.length > 200) return json({ error: "password", message: "Kies een wachtwoord van minstens 10 tekens." }, 400);
+  if (!(await hit(env, `pwr:${await ipHash(env, request)}:${today()}`, 20))) return json({ error: "rate", message: "Te veel pogingen. Probeer het morgen opnieuw." }, 429);
+  const row = await env.DB.prepare("SELECT user_id FROM password_resets WHERE token_hash = ? AND expires_at > ?").bind(await sha256Hex(token), Date.now()).first();
+  if (!row) return json({ error: "token", message: "Deze link is verlopen of al gebruikt. Vraag een nieuwe aan." }, 400);
+  const salt = randomHex(16);
+  await env.DB.batch([
+    env.DB.prepare("UPDATE users SET salt = ?, hash = ? WHERE id = ?").bind(salt, await hashPassword(password, salt), row.user_id),
+    env.DB.prepare("DELETE FROM password_resets WHERE user_id = ?").bind(row.user_id),
+    env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(row.user_id)
+  ]);
+  log("password_reset");
+  return json({ ok: true });
 }
 
 async function register(request, env) {
@@ -2515,6 +2596,7 @@ async function deleteUserData(env, userId) {
     env.DB.prepare("DELETE FROM user_emails WHERE user_id = ?").bind(userId),
     env.DB.prepare("DELETE FROM passes WHERE user_id = ?").bind(userId),
     env.DB.prepare("DELETE FROM notices WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM password_resets WHERE user_id = ?").bind(userId),
     env.DB.prepare("DELETE FROM admin_notes WHERE user_id = ?").bind(userId),
     env.DB.prepare("DELETE FROM users WHERE id = ?").bind(userId)
   ]);
