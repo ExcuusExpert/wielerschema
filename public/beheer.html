@@ -38,6 +38,15 @@
         <div class="card"><strong id="n-new">–</strong><span>nieuw (7 dagen)</span></div>
       </div>
       <div class="card stack">
+        <h2>Mail testen</h2>
+        <p class="muted small-text">Stuurt een testmail via Zoho. Zo zie je meteen of wachtwoordherstel kan werken, en wat er misgaat als het niet lukt. Laat het veld leeg om naar je eigen e-mailadres te sturen.</p>
+        <div class="admin-tools">
+          <label class="field admin-search"><span class="sr-only">E-mailadres voor de testmail</span><input id="mail-to" type="email" placeholder="E-mailadres (optioneel)" autocomplete="off"></label>
+          <button id="mail-test" class="btn small" type="button">Testmail versturen</button>
+        </div>
+        <p id="mail-msg" class="admin-msg" role="status"></p>
+      </div>
+      <div class="card stack">
         <div class="admin-tools">
           <label class="field admin-search"><span class="sr-only">Zoek een gebruiker</span><input id="q" type="search" placeholder="Zoek op gebruikersnaam" autocomplete="off"></label>
           <label class="check"><input id="only-pas" type="checkbox"><span>Alleen met pas</span></label>

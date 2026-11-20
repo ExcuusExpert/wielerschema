@@ -100,5 +100,14 @@
   $("q").addEventListener("input", render);
   $("only-pas").addEventListener("change", render);
   $("refresh").addEventListener("click", load);
+  $("mail-test").addEventListener("click", async () => {
+    const button = $("mail-test"); button.disabled = true; $("mail-msg").textContent = "Bezig met versturen…";
+    try {
+      const res = await fetch("/api/admin/mailtest", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: $("mail-to").value.trim() }) });
+      const data = await res.json().catch(() => ({}));
+      $("mail-msg").textContent = res.ok ? `Testmail verstuurd naar ${data.naar}. Kijk ook in je spam.` : (data.detail || data.message || "Mislukt.");
+    } catch { $("mail-msg").textContent = "Geen verbinding met de server."; }
+    button.disabled = false;
+  });
   start();
 })();

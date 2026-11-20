@@ -32,7 +32,7 @@ test("titel, beschrijving, canonical en deelafbeelding zijn netjes", () => {
 
 test("robots.txt, sitemap.xml en og-image zijn aanwezig en kloppen", () => {
   const robots = read("robots.txt");
-  assert.ok(robots.includes("Sitemap: https://wielerschema.me/sitemap.xml") && robots.includes("Disallow: /api/"));
+  assert.ok(robots.includes("Sitemap: https://wielerschema.me/sitemap.xml") && !robots.includes("Disallow: /api/"), "/api/ mag niet geblokkeerd zijn: Google heeft die aanroepen nodig om de startpagina te tonen");
   const sitemap = read("sitemap.xml");
   assert.ok(sitemap.includes("<loc>https://wielerschema.me/</loc>") && sitemap.includes("<loc>https://wielerschema.me/privacy.html</loc>"));
   const png = fs.readFileSync("public/og-image.png");

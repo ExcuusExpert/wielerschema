@@ -756,6 +756,13 @@ async function adminRoute(request, env, user, path, method) {
   }
   if (method !== "POST") return json({ error: "not_found" }, 404);
   const body = await readJson(request);
+  if (path === "/api/admin/mailtest") {
+    const typed = cleanEmail(body.email);
+    const to = typed.error ? "" : (typed.email || (await emailOf(env, user.id)) || "");
+    if (!to) return json({ error: "email", message: "Vul een e-mailadres in om de testmail naar te sturen." }, 400);
+    const result = await sendMail(env, to, "Testmail van WielerSchema", "Dit is een testmail van WielerSchema. Als je dit leest, werkt het versturen van e-mail.");
+    return json({ ok: result.ok, naar: to, detail: result.detail }, result.ok ? 200 : 502, noStore);
+  }
   const username = typeof body.username === "string" ? body.username.trim().toLowerCase().slice(0, 60) : "";
   const target = await env.DB.prepare("SELECT id FROM users WHERE username = ?").bind(username).first();
   if (!target) return json({ error: "not_found", message: "Gebruiker niet gevonden." }, 404);
@@ -1105,18 +1112,19 @@ async function handleApi(request, env, url) {
 
 // ---------- nieuwsbrief (Zoho Campaigns) ----------
 // Alleen na een aangevinkt, ongemarkeerd vakje. Zonder ingestelde secrets gebeurt er niets en blijft aanmelden gewoon werken.
-let zohoToken = { value: null, until: 0 };
+let zohoToken = { value: null, until: 0, key: "" };
+const zohoKey = env => `${env.ZOHO_CLIENT_ID}:${env.ZOHO_REFRESH_TOKEN}:${env.ZOHO_DC || ""}`;
 const ZOHO_DCS = ["eu", "com", "in", "com.au", "jp", "com.cn"];
 const zohoDc = env => (ZOHO_DCS.includes(env.ZOHO_DC) ? env.ZOHO_DC : "eu");
 async function zohoAccessToken(env) {
-  if (zohoToken.value && zohoToken.until > Date.now()) return zohoToken.value;
+  if (zohoToken.value && zohoToken.until > Date.now() && zohoToken.key === zohoKey(env)) return zohoToken.value;
   const res = await fetch(`https://accounts.zoho.${zohoDc(env)}/oauth/v2/token`, {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, signal: AbortSignal.timeout(4000),
     body: new URLSearchParams({ grant_type: "refresh_token", client_id: env.ZOHO_CLIENT_ID, client_secret: env.ZOHO_CLIENT_SECRET, refresh_token: env.ZOHO_REFRESH_TOKEN })
   });
   const data = await res.json().catch(() => ({}));
-  if (!data.access_token) throw new Error("zoho_token");
-  zohoToken = { value: data.access_token, until: Date.now() + 50 * 60 * 1000 };
+  if (!data.access_token) throw new Error(`token opvragen mislukt (${data.error || res.status}). Controleer ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN en ZOHO_DC.`);
+  zohoToken = { value: data.access_token, until: Date.now() + 50 * 60 * 1000, key: zohoKey(env) };
   return zohoToken.value;
 }
 async function subscribeNewsletter(env, email) {
@@ -1130,7 +1138,7 @@ async function subscribeNewsletter(env, email) {
       body: new URLSearchParams({ listkey: env.ZOHO_LIST_KEY, resfmt: "JSON", contactinfo: `{Contact Email:${email}}`, source: "wielerschema-app" })
     });
     const data = await res.json().catch(() => ({}));
-    if (res.status === 401) zohoToken = { value: null, until: 0 };
+    if (res.status === 401) zohoToken = { value: null, until: 0, key: "" };
     const ok = data.status === "success";
     log(ok ? "newsletter_ok" : "newsletter_fail", { code: data.code ?? res.status });
     return ok;
@@ -1140,20 +1148,21 @@ async function subscribeNewsletter(env, email) {
 // ---------- e-mail via Zoho Mail en wachtwoord herstellen ----------
 // Gebruikt dezelfde Zoho-gegevens als de nieuwsbrief. De refresh token heeft ook de scopes
 // ZohoMail.messages.CREATE en ZohoMail.accounts.READ nodig. Afzender: MAIL_FROM (standaard hessel@wielerschema.me).
-let zohoMailAccount = null;
+let zohoMailAccount = { id: null, key: "" };
 const mailConfigured = env => Boolean(env.ZOHO_CLIENT_ID && env.ZOHO_CLIENT_SECRET && env.ZOHO_REFRESH_TOKEN);
 async function zohoMailAccountId(env, token) {
   if (env.ZOHO_MAIL_ACCOUNT_ID) return String(env.ZOHO_MAIL_ACCOUNT_ID);
-  if (zohoMailAccount) return zohoMailAccount;
+  if (zohoMailAccount.id && zohoMailAccount.key === zohoKey(env)) return zohoMailAccount.id;
   const res = await fetch(`https://mail.zoho.${zohoDc(env)}/api/accounts`, { headers: { Authorization: `Zoho-oauthtoken ${token}` }, signal: AbortSignal.timeout(5000) });
   const data = await res.json().catch(() => ({}));
   const id = data && data.data && data.data[0] && data.data[0].accountId;
-  if (!id) throw new Error("zoho_mail_account");
-  zohoMailAccount = String(id);
-  return zohoMailAccount;
+  if (!id) throw new Error(`mailaccount ophalen mislukt (${(data && data.data && data.data.errorCode) || (data && data.status && data.status.description) || res.status}). Controleer of de token de scope ZohoMail.accounts.READ heeft.`);
+  zohoMailAccount = { id: String(id), key: zohoKey(env) };
+  return zohoMailAccount.id;
 }
+// Geeft { ok, detail } terug; detail bevat nooit een token of geheim en wordt alleen aan de beheerder getoond
 async function sendMail(env, to, subject, text) {
-  if (!mailConfigured(env)) return false;
+  if (!mailConfigured(env)) return { ok: false, detail: "ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET of ZOHO_REFRESH_TOKEN ontbreekt." };
   try {
     const token = await zohoAccessToken(env);
     const accountId = await zohoMailAccountId(env, token);
@@ -1163,11 +1172,16 @@ async function sendMail(env, to, subject, text) {
       body: JSON.stringify({ fromAddress: env.MAIL_FROM || "hessel@wielerschema.me", toAddress: to, subject, content: text, mailFormat: "plaintext" })
     });
     const data = await res.json().catch(() => ({}));
-    if (res.status === 401) zohoToken = { value: null, until: 0 };
+    if (res.status === 401) zohoToken = { value: null, until: 0, key: "" };
     const ok = res.ok && (!data.status || data.status.code === 200);
+    const detail = ok ? "verstuurd" : `versturen mislukt (HTTP ${res.status}: ${(data && data.data && (data.data.errorCode || data.data.moreInfo)) || (data && data.status && data.status.description) || "geen uitleg"}). Controleer of MAIL_FROM het adres van het Zoho-account is en of de token de scope ZohoMail.messages.CREATE heeft.`;
     log(ok ? "mail_ok" : "mail_fail", { code: res.status });
-    return ok;
-  } catch { log("mail_error"); return false; }
+    return { ok, detail };
+  } catch (e) {
+    const detail = e && e.message ? String(e.message).slice(0, 300) : "onbekende fout";
+    log("mail_error", { detail });
+    return { ok: false, detail };
+  }
 }
 const RESET_TTL_MS = 60 * 60 * 1000;
 async function forgotPassword(request, env) {
@@ -1825,10 +1839,12 @@ async function questions(request, env, user) {
   if (c.error) return json({ error: "intake", message: c.error }, 400);
   const gate = await aiAllowed(env, user);
   if (!gate.ok) return gate.res;
-  const prompt = `${intakeBlock(c.intake)}\nStel maximaal 5 korte vervolgvragen die je echt nodig hebt om een veilig en realistisch schema te maken (bijvoorbeeld over het huidige weekvolume, ervaring met intervaltraining, drukte in werk of gezin, terrein, materiaal). Vraag niet naar wat al is ingevuld. Heb je genoeg informatie, geef dan een lege lijst. Formaat: {"vragen":[{"id":"v1","vraag":"..."}]}`;
+  const prompt = `${intakeBlock(c.intake)}\nStel maximaal 5 korte vervolgvragen die je echt nodig hebt om een veilig en realistisch schema te maken (bijvoorbeeld over het huidige weekvolume, ervaring met intervaltraining, drukte in werk of gezin). Vraag niet naar de ondergrond of het terrein (de meeste renners fietsen in Nederland, dus vlak) en niet naar het soort fiets (het is altijd een racefiets), tenzij dat in de ingevulde gegevens zelf als bijzonderheid staat. Vraag niet naar wat al is ingevuld. Heb je genoeg informatie, geef dan een lege lijst. Formaat: {"vragen":[{"id":"v1","vraag":"..."}]}`;
   const r = await askValidated(env, prompt, 1500, (d) => {
     if (!Array.isArray(d.vragen)) throw new Error("geen vragen");
-    return d.vragen.slice(0, 5).map((v, i) => ({ id: `v${i + 1}`, vraag: cleanCoachText(v?.vraag, 200) })).filter(v => v.vraag);
+    // Extra vangnet: de AI houdt zich niet altijd aan de prompt, en deze vragen zijn voor deze doelgroep overbodig
+    const overbodig = /ondergrond|terrein|heuvelachtig|bergachtig|soort fiets|type fiets|welke fiets|racefiets|mountainbike/i;
+    return d.vragen.filter(v => !overbodig.test(String(v?.vraag || ""))).slice(0, 5).map((v, i) => ({ id: `v${i + 1}`, vraag: cleanCoachText(v?.vraag, 200) })).filter(v => v.vraag);
   });
   if (!r.value) return aiError(r);
   return json({ vragen: r.value });

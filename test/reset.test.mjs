@@ -40,7 +40,7 @@ let mails = [], mailFails = false;
 const wrapped = globalThis.fetch;
 globalThis.fetch = async (url, init) => {
   const u = String(url);
-  if (u.includes("accounts.zoho.")) return new Response(JSON.stringify({ access_token: "tok" }), { status: 200 });
+  if (u.includes("accounts.zoho.")) return String(init.body).includes("refresh_token=bad") ? new Response(JSON.stringify({ error: "invalid_code" }), { status: 400 }) : new Response(JSON.stringify({ access_token: "tok" }), { status: 200 });
   if (u === "https://mail.zoho.eu/api/accounts") return new Response(JSON.stringify({ data: [{ accountId: "12345" }] }), { status: 200 });
   if (u === "https://mail.zoho.eu/api/accounts/12345/messages") {
     const body = JSON.parse(init.body);
@@ -134,3 +134,33 @@ test("herstel: een mislukte mail laat het antwoord ongewijzigd en lekt niets", a
   assert.ok(!JSON.stringify(r.data).includes("herstel="));
   mailFails = false;
 });
+
+test("mailtest: alleen voor beheerders, met bruikbare uitleg als het misgaat", async () => {
+  mails = []; mailFails = false;
+  const env = { ...makeEnv(), ...ZOHO, ADMIN_USERS: "beheer" };
+  const admin = (await reg(env, "beheer", "beheer@voorbeeld.nl")).cookie;
+  const user = (await reg(env, "renner", "renner@voorbeeld.nl")).cookie;
+  const test = (e, cookie, email) => api(e, "POST", "/api/admin/mailtest", { email }, cookie);
+  assert.equal((await test(env, user, "")).status, 403);
+  assert.equal((await api(env, "POST", "/api/admin/mailtest", {})).status, 401);
+  const ok = await test(env, admin, "");
+  assert.equal(ok.status, 200);
+  assert.equal(ok.data.naar, "beheer@voorbeeld.nl", "zonder adres naar het eigen adres van de beheerder");
+  assert.equal(mails.at(-1).toAddress, "beheer@voorbeeld.nl");
+  assert.equal((await test(env, admin, "ander@voorbeeld.nl")).data.naar, "ander@voorbeeld.nl");
+  assert.equal((await test(env, admin, "geen-adres")).status, 400);
+  mailFails = true;
+  const failed = await test(env, admin, "");
+  assert.equal(failed.status, 502);
+  assert.match(failed.data.detail, /versturen mislukt \(HTTP 500/);
+  assert.match(failed.data.detail, /MAIL_FROM/);
+  mailFails = false;
+  const badToken = await test({ ...env, ZOHO_REFRESH_TOKEN: "bad" }, admin, "");
+  assert.equal(badToken.status, 502);
+  assert.match(badToken.data.detail, /invalid_code/, "de foutcode van Zoho komt terug");
+  assert.ok(!JSON.stringify(badToken.data).includes("secret"), "geen geheimen in de uitleg");
+  const none = await test(makeEnvWith(env), admin, "");
+  assert.equal(none.status, 502);
+  assert.match(none.data.detail, /ontbreekt/);
+});
+function makeEnvWith(env) { return { ...env, ZOHO_REFRESH_TOKEN: undefined }; }
