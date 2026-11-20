@@ -1,5 +1,5 @@
-const CACHE_NAME = "wielerschema-shell-v2";
-const SHELL = ["/", "/index.html", "/style.css", "/app.js", "/manifest.webmanifest", "/logo.png"];
+const CACHE_NAME = "wielerschema-shell-v3";
+const SHELL = ["/", "/index.html", "/style.css?v=2026-11-20", "/app.js?v=2026-11-20", "/manifest.webmanifest", "/logo.png"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(SHELL)));

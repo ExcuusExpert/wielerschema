@@ -1,8 +1,8 @@
-# WielerSchema
+# WielerSchema (eerste versie)
 
 Een openbare webapp waarin wielrenners een trainingsschema laten maken door een AI-coach (Groq). De coach stelt eerst vragen, maakt een schema voor de beschikbare dagen en stuurt elke week bij op basis van de terugmelding.
 
-Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert zowel de website (`public/`) als de API, met D1 als database. Dit project is gemaakt door Hessel.
+Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert zowel de website (`public/`) als de API, met D1 als database.
 
 ## Wat kan het nu
 
@@ -30,13 +30,15 @@ Alles draait op Cloudflare in één project: de Worker (`src/worker.js`) levert 
 - Onder Account kun je je geboortedatum, meetapparatuur en trainingszones aanpassen, je gebruikersnaam of wachtwoord wijzigen, je gegevens downloaden en je account verwijderen.
 - Privacyverklaring.
 
-Nog niet: wachtwoord vergeten via e-mail (het e-mailadres wordt wel al, optioneel, bewaard), automatische koppelingen met Garmin, Strava of Wahoo. Intervals.icu vereist OAuth-secrets en een goedgekeurde app.
+Nog niet: automatische koppelingen met Garmin, Strava of Wahoo. Intervals.icu vereist OAuth-secrets en een goedgekeurde app.
 
 ## 2-maandpas (betaalde functies)
 
 Gratis: schema tot 8 weken, 4 wedstrijden, 10 chatberichten per dag, basisanalyse. Met pas (€ 5 voor 2 maanden): schema tot 16 weken, 15 wedstrijden, 60 AI-aanvragen per dag, AI-ritanalyse en diepe analyse (vermoeidheid, vorm, gereedheid, slaap en HRV). Rekentools en veiligheidsregels blijven voor iedereen gelijk. De limieten staan bovenin `src/worker.js` (`FREE_CHAT_PER_DAY`, `AI_PRO_PER_USER_PER_DAY`, `PRO_MAX_RACES`, `FREE_PLAN_WEEKS`). De gezamenlijke limiet van 100 AI-aanvragen per dag geldt ook voor pashouders.
 
 Betalen gaat via een aparte Tikkie-link van € 5 (variabele `PAS_URL`; `TIKKIE_URL` blijft de steunknop). Zodra een betaling binnen is, zet je de pas aan op de beheerpagina.
+
+Elk account kan de 2-maandpas één keer 3 dagen gratis proberen (knop bij Account en bij de analyse). Wie al eens een pas heeft gehad of de proef heeft gebruikt, kan dat niet opnieuw. Op de beheerpagina staat zo'n account als "Proef tot ...". Zet je daarna een betaalde pas aan, dan geldt hij als gewone pas.
 
 ### Beheerpagina
 
@@ -117,7 +119,7 @@ node test/frontend-smoke.mjs   # rooktest van de website
 1. **Contactgegevens in `public/privacy.html`:** staat nu op hessel@wielerschema.me. Controleer dat dit adres bereikbaar is voordat je de site openbaar maakt.
 2. **Privacy en AVG.** De app verwerkt trainingsgegevens en mogelijk gezondheidsinformatie (klachten, beperkingen) van anderen en stuurt die naar Groq in de VS. Ik ben geen jurist, dus laat de privacyverklaring en je verplichtingen (zoals verwerkersafspraken met Cloudflare en Groq) nakijken, vooral omdat het openbaar is. Houd de invoer beperkt: velden voor klachten zijn optioneel.
 3. **Kosten en limieten van Groq.** Een chatbericht kost ongeveer 4.000 tot 5.000 tokens en een schema iets meer. De app begrenst op 15 AI-aanvragen per gebruiker per dag en 100 voor iedereen samen (zie bovenin `src/worker.js`). Controleer de limieten op console.groq.com/settings/limits.
-4. **Wachtwoord vergeten.** Het e-mailadres wordt bij het aanmaken van een account (optioneel) bewaard in de tabel `user_emails`. De herstelmail zelf is nog niet gebouwd; daarvoor is een mailservice nodig (bijvoorbeeld Resend, met `hessel@wielerschema.me` als afzender).
+4. **Wachtwoord vergeten.** Werkt via Zoho Mail met dezelfde Zoho-gegevens als de nieuwsbrief. Maak de refresh token (Self Client) met deze scopes: `ZohoCampaigns.contact.UPDATE,ZohoMail.messages.CREATE,ZohoMail.accounts.READ`. De afzender is `hessel@wielerschema.me` (aan te passen met `MAIL_FROM`; dat moet het adres van het Zoho-account zijn). Het account-id van de mailbox wordt vanzelf opgehaald; je kunt het ook vastzetten met `ZOHO_MAIL_ACCOUNT_ID`. Zonder deze instellingen krijgt de gebruiker de melding dat herstel nog niet beschikbaar is.
 5. **Opmaak en teksten** zijn een eerste opzet. Kijk of de toon en de vragen van de coach bij je doelgroep passen.
 
 ## Mogelijke vervolgstappen

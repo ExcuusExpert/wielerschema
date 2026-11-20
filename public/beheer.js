@@ -33,7 +33,7 @@
     } catch (e) { $("msg").textContent = e.message; }
   }
   function status(a) {
-    if (a.pas_tot) return { text: "Pas tot " + date(a.pas_tot), cls: "ok" };
+    if (a.pas_tot) return { text: (a.proef ? "Proef tot " : "Pas tot ") + date(a.pas_tot), cls: "ok" };
     if (a.pas_verlopen) return { text: "Pas verlopen", cls: "off" };
     return { text: "Gratis", cls: "free" };
   }

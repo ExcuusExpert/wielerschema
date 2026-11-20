@@ -2307,8 +2307,32 @@ function renderAnalytics(body, a) {
 }
 
 // ---------- 2-maandpas ----------
+async function reloadMe() {
+  const me = await api("GET", "/api/me");
+  state.pas = me.pas || { actief: false };
+  state.limieten = me.limieten || null;
+  state.meldingen = me.meldingen || [];
+}
+async function startTrial(button) {
+  button.disabled = true;
+  try { await api("POST", "/api/pass/trial", {}); await reloadMe(); viewAccount(); }
+  catch (e) { button.disabled = false; button.textContent = e.message; }
+}
+function trialButton(extraClass = "btn") {
+  const days = (state.pas && state.pas.proef_dagen) || 3;
+  if (!state.pas || !state.pas.proef_beschikbaar) return null;
+  const button = h("button", { class: extraClass, type: "button", text: `Probeer ${days} dagen gratis` });
+  button.addEventListener("click", () => startTrial(button));
+  return button;
+}
 function passCard() {
   const pas = state.pas || { actief: false };
+  if (pas.actief && pas.proef) {
+    return h("section", { class: "card stack pass-card" },
+      h("h2", { text: "Je gratis proef loopt" }),
+      h("p", {}, "Je proef loopt tot ", h("strong", { text: new Date(pas.verloopt).toLocaleDateString("nl-NL", { day: "numeric", month: "long", year: "numeric" }) }), ". Tot dan heb je alles van de 2-maandpas. Wil je daarna doorgaan? Dan kost de 2-maandpas € 5."),
+      payBlock("Betaal € 5 via Tikkie"));
+  }
   if (pas.actief) {
     return h("section", { class: "card stack pass-card" },
       h("h2", { text: "2-maandpas" }),
@@ -2325,6 +2349,8 @@ function passCard() {
       h("li", { text: "Persoonlijke AI-analyse van je ritten" }),
       h("li", { text: "Diepe analyse: vermoeidheid, vorm, slaap en HRV" })),
     h("p", { class: "muted", text: "Rekentools en alle veiligheidsmaatregelen blijven voor iedereen gratis." }),
+    trialButton("btn ghost"),
+    state.pas && state.pas.proef_beschikbaar ? h("p", { class: "muted small-text", text: "Eén keer per account, zonder betaling. Daarna stopt het vanzelf." }) : null,
     payBlock("Betaal € 5 via Tikkie"));
 }
 function payBlock(label) {
@@ -2341,7 +2367,7 @@ function lockedAnalysisCard() {
   return h("section", { class: "card stack" },
     h("h2", { text: "Diepe analyse met de 2-maandpas" }),
     h("p", { class: "muted", text: "Met de pas zie je je vermoeidheid, vorm, gereedheid om te trainen, belastingsverhouding en je nachten (slaap, HRV en rusthartslag)." }),
-    h("button", { class: "btn", type: "button", text: "Bekijk de 2-maandpas", onclick: () => viewAccount() }));
+    h("div", { class: "row" }, trialButton(), h("button", { class: state.pas && state.pas.proef_beschikbaar ? "btn ghost" : "btn", type: "button", text: "Bekijk de 2-maandpas", onclick: () => viewAccount() })));
 }
 
 // ---------- account ----------
